@@ -119,9 +119,16 @@ def enforce_mathematical_consistency(
 
 def validate_actionable_fixes(fixes: List[SuggestedFix]) -> List[SuggestedFix]:
     """
-    Ensures fixes are concrete drafted text and not generic meta-advice.
+    Ensures fixes are concrete drafted text, cleans currency symbols,
+    and sorts by deal-breaking severity (CRITICAL first).
     """
+    severity_rank = {"CRITICAL": 0, "MAJOR": 1, "MINOR": 2}
+
     for fix in fixes:
+        # Normalize any corrupted currency characters to proper UTF-8 Euro symbol
+        fix.suggested_fix = fix.suggested_fix.replace(" ", "€").replace("––", "–")
+        fix.issue_description = fix.issue_description.replace(" ", "€").replace("––", "–")
+
         text = fix.suggested_fix.strip()
         # If fix is too short or reads like generic instruction, enrich with placeholder template
         if len(text.split()) < 10 or text.lower().startswith("you should improve"):
@@ -130,4 +137,7 @@ def validate_actionable_fixes(fixes: List[SuggestedFix]) -> List[SuggestedFix]:
                 f"> \"{text}\"\n\n"
                 f"*Note: Ensure concrete figures and parameters are confirmed.*"
             )
+
+    # Sort so CRITICAL constraints and deferred pricing appear first
+    fixes.sort(key=lambda f: severity_rank.get(f.severity, 1))
     return fixes

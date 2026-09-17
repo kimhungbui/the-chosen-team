@@ -1,5 +1,6 @@
 import json
-from typing import Optional
+import time
+from typing import Optional, Type, TypeVar
 from models.schemas import RFPAnalysis, ComplianceMatrix, ProposalReviewReport
 from agents.rfp_extractor import create_rfp_extractor_agent
 from agents.compliance_auditor import create_compliance_auditor_agent
@@ -9,6 +10,53 @@ from guardrails.verifier import (
     enforce_mathematical_consistency,
     validate_actionable_fixes,
 )
+
+T = TypeVar("T")
+
+def _run_agent_with_retry(
+    agent_factory,
+    prompt: str,
+    expected_type: Type[T],
+    agent_name: str = "Agent",
+    max_retries: int = 4,
+    base_delay: float = 3.0,
+) -> T:
+    """
+    Executes an Agno agent call with exponential backoff retry on transient
+    API errors such as Gemini 503 high demand spikes.
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            agent = agent_factory()
+            resp = agent.run(prompt)
+            content = resp.content
+            
+            if isinstance(content, expected_type):
+                return content
+            elif isinstance(content, str):
+                if any(err_code in content for err_code in ["503", "UNAVAILABLE", "ResourceExhausted", "429"]):
+                    raise RuntimeError(f"Gemini API transient rate/demand error: {content[:200]}")
+                # Try parsing JSON if schema validation was returned as raw JSON text
+                clean = content.strip()
+                if clean.startswith("```json"):
+                    clean = clean[7:]
+                if clean.startswith("```"):
+                    clean = clean[3:]
+                if clean.endswith("```"):
+                    clean = clean[:-3]
+                return expected_type.model_validate_json(clean.strip())
+            elif isinstance(content, dict):
+                return expected_type.model_validate(content)
+            else:
+                raise RuntimeError(f"Unexpected agent output type: {type(content)}")
+        except Exception as e:
+            if attempt < max_retries:
+                wait_time = base_delay * (1.5 ** (attempt - 1))
+                print(f"   ⚠️  [{agent_name}] Attempt {attempt} failed ({str(e)[:120]}). Retrying in {wait_time:.1f}s...")
+                time.sleep(wait_time)
+            else:
+                print(f"   ❌ [{agent_name}] All {max_retries} attempts failed: {e}")
+                raise e
 
 def evaluate_proposal(
     rfp_content: str,
@@ -25,20 +73,35 @@ def evaluate_proposal(
     4. Deterministic Python guardrails: quote verification, line matching, and score math reconciliation.
     """
     if verbose:
-        print("\n🔍 [Step 1/4] Extracting requirements and constraints from RFP...")
+        print("\n" + "=" * 75)
+        print("🔍 [STEP 1/4: RFP REQUIREMENTS & CONSTRAINTS EXTRACTION]")
+        print("   Agent 1 (RFPExtractorAgent) reading RFP with Gemini 3.5 Flash...")
+        print("=" * 75)
 
-    rfp_extractor = create_rfp_extractor_agent()
-    rfp_resp = rfp_extractor.run(
-        f"Analyze this client RFP and extract all requirements, constraints, budget, timeline, and priorities:\n\n{rfp_content}"
+    rfp_analysis: RFPAnalysis = _run_agent_with_retry(
+        agent_factory=create_rfp_extractor_agent,
+        prompt=f"Analyze this client RFP and extract all requirements, constraints, budget, timeline, and priorities:\n\n{rfp_content}",
+        expected_type=RFPAnalysis,
+        agent_name="RFPExtractorAgent",
     )
-    rfp_analysis: RFPAnalysis = rfp_resp.content
 
     if verbose:
-        print(f"   ✓ Extracted {len(rfp_analysis.requirements)} requirements/constraints.")
-        print(f"   ✓ Detected Client Priority: {rfp_analysis.detected_client_priority}")
-        print("\n📋 [Step 2/4] Cross-auditing proposal against RFP requirements checklist...")
+        print(f"\n📌 Client Name:        {rfp_analysis.client_name}")
+        print(f"🎯 Project Goal:       {rfp_analysis.project_goal}")
+        print(f"💰 Commercial Budget:  {rfp_analysis.budget_range}")
+        print(f"⏱️  Delivery Target:   {rfp_analysis.timeline_requirement}")
+        print(f"🧠 Detected Priority:  {rfp_analysis.detected_client_priority}")
+        print(f"\n📋 Checklist of Recalled Requirements & Constraints ({len(rfp_analysis.requirements)} total):")
+        for idx, req in enumerate(rfp_analysis.requirements, 1):
+            constraint_tag = " [🚨 STRICT CONSTRAINT]" if req.is_constraint else ""
+            print(f"   [{idx}] {req.id}: {req.title}{constraint_tag} (Priority: {req.priority})")
+            print(f"       Verbatim RFP Quote: \"{req.exact_quote}\"")
 
-    compliance_auditor = create_compliance_auditor_agent()
+        print("\n" + "=" * 75)
+        print("📋 [STEP 2/4: COMPLIANCE AUDIT & EVIDENCE RECALL]")
+        print("   Agent 2 (ComplianceAuditorAgent) cross-referencing proposal against checklist...")
+        print("=" * 75)
+
     audit_prompt = (
         f"### RFP Requirements Checklist:\n"
         f"{json.dumps([r.model_dump() for r in rfp_analysis.requirements], indent=2)}\n\n"
@@ -46,18 +109,41 @@ def evaluate_proposal(
         f"{proposal_content}\n\n"
         f"Perform an exhaustive compliance audit of the proposal against each requirement in the checklist."
     )
-    audit_resp = compliance_auditor.run(audit_prompt)
-    compliance_matrix: ComplianceMatrix = audit_resp.content
+    compliance_matrix: ComplianceMatrix = _run_agent_with_retry(
+        agent_factory=create_compliance_auditor_agent,
+        prompt=audit_prompt,
+        expected_type=ComplianceMatrix,
+        agent_name="ComplianceAuditorAgent",
+    )
 
     if verbose:
+        print("\n📊 Cross-Audit Evidence Recalled from Proposal:")
+        for item in compliance_matrix.items:
+            icon = {
+                "MET": "✅ MET",
+                "PARTIALLY_MET": "⚠️  PARTIAL",
+                "MISSING": "❌ MISSING",
+                "CONTRADICTED": "🚫 CONTRADICTED",
+                "DEFERRED": "⏳ DEFERRED"
+            }.get(item.status, item.status)
+            print(f"\n   • {item.requirement_id} ({item.requirement_title}): {icon}")
+            if item.proposal_quote:
+                print(f"     Recalled Proposal Quote: \"{item.proposal_quote}\" (Section: {item.proposal_section})")
+            else:
+                print("     Recalled Proposal Quote: [NO EVIDENCE FOUND - REQUIREMENT OMITTED]")
+            print(f"     Audit Gap Analysis: {item.gap_analysis}")
+
         met = sum(1 for i in compliance_matrix.items if i.status == "MET")
         missing = sum(1 for i in compliance_matrix.items if i.status == "MISSING")
         partial = sum(1 for i in compliance_matrix.items if i.status in ["PARTIALLY_MET", "DEFERRED"])
         contradicted = sum(1 for i in compliance_matrix.items if i.status == "CONTRADICTED")
-        print(f"   ✓ Audit complete: {met} Met | {partial} Partial/Deferred | {missing} Missing | {contradicted} Contradicted")
-        print("\n✍️  [Step 3/4] Generating rubric scores and drafting actionable fixes...")
+        print(f"\n   📈 Audit Summary: {met} Met | {partial} Partial/Deferred | {missing} Missing | {contradicted} Contradicted")
 
-    scorer_and_fixer = create_scorer_and_fixer_agent()
+        print("\n" + "=" * 75)
+        print("✍️  [STEP 3/4: 7-CRITERIA SCORING & ACTIONABLE FIX DRAFTING]")
+        print("   Agent 3 (ScorerAndFixerAgent) calibrating rubrics & drafting clauses...")
+        print("=" * 75)
+
     scoring_prompt = (
         f"### Original RFP:\n{rfp_content}\n\n"
         f"### Proposal Draft:\n{proposal_content}\n\n"
@@ -66,11 +152,33 @@ def evaluate_proposal(
         f"{json.dumps([item.model_dump() for item in compliance_matrix.items], indent=2)}\n\n"
         f"Produce the full ProposalReviewReport scoring the 7 criteria and providing actionable fixes."
     )
-    scoring_resp = scorer_and_fixer.run(scoring_prompt)
-    report: ProposalReviewReport = scoring_resp.content
+    report: ProposalReviewReport = _run_agent_with_retry(
+        agent_factory=create_scorer_and_fixer_agent,
+        prompt=scoring_prompt,
+        expected_type=ProposalReviewReport,
+        agent_name="ScorerAndFixerAgent",
+    )
 
     if verbose:
-        print("\n🛡️  [Step 4/4] Running Deterministic Python Guardrails...")
+        print("\n🏆 Rubric Scores Derived:")
+        for score in report.criteria_scores:
+            print(f"   • {score.criterion}: {score.score}/5.0 — {score.comment}")
+
+        print(f"\n✍️  Drafted Actionable Fixes ({len(report.actionable_fixes)} total):")
+        for idx, fix in enumerate(report.actionable_fixes, 1):
+            sev_badge = getattr(fix, "severity", "MAJOR")
+            print(f"\n   [{idx}] [{sev_badge}] {fix.title}")
+            print(f"       RFP Ref: \"{fix.rfp_citation}\" | Proposal Sec: {fix.proposal_citation}")
+            print(f"       Issue: {fix.issue_description}")
+            print("       Suggested Replacement:")
+            for line in fix.suggested_fix.splitlines()[:5]:
+                print(f"         {line}")
+            if len(fix.suggested_fix.splitlines()) > 5:
+                print("         [... table / clause continues ...]")
+
+        print("\n" + "=" * 75)
+        print("🛡️  [STEP 4/4: DETERMINISTIC PYTHON GUARDRAIL VERIFICATION]")
+        print("=" * 75)
 
     # Python Guardrail Layer
     report = verify_citations_and_lines(
@@ -80,8 +188,10 @@ def evaluate_proposal(
     report.actionable_fixes = validate_actionable_fixes(report.actionable_fixes)
 
     if verbose:
-        print(f"   ✓ Verified citations against source text.")
-        print(f"   ✓ Enforced mathematical score consistency: Overall {report.overall_score}/5.0 ({report.readiness_verdict})")
+        print("   ✓ Verbatim Quote Verification & Line Resolution:")
+        for fix in report.actionable_fixes:
+            print(f"     - {fix.title}: {fix.line_reference} (Verified in source: {fix.verified_in_source})")
+        print(f"   ✓ Mathematical Consistency Enforced: Overall {report.overall_score}/5.0 ({report.readiness_verdict})")
 
     return report
 

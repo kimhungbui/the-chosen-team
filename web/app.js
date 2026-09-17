@@ -318,9 +318,16 @@ function renderResults(report) {
       if (fix.category === 'DEFERRED') pillClass = 'badge-warning';
       else if (fix.category === 'VAGUE') pillClass = 'badge-warning';
 
+      const severity = fix.severity || 'MAJOR';
+      let sevClass = 'badge-danger';
+      let sevIcon = '🔴';
+      if (severity === 'MAJOR') { sevClass = 'badge-warning'; sevIcon = '🟡'; }
+      else if (severity === 'MINOR') { sevClass = 'badge-tech'; sevIcon = '⚪'; }
+
       card.innerHTML = `
         <div class="fix-card-header">
           <div class="fix-title-group">
+            <span class="fix-category-pill ${sevClass}">${sevIcon} ${severity}</span>
             <span class="fix-category-pill ${pillClass}">${fix.category}</span>
             <h3 class="fix-title">${fix.title}</h3>
           </div>

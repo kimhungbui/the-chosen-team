@@ -36,6 +36,10 @@ class SuggestedFix(BaseModel):
     category: Literal["MISSING_REQUIREMENT", "VAGUE", "CONTRADICTION", "DEFERRED"] = Field(
         description="Category of the detected issue"
     )
+    severity: Literal["CRITICAL", "MAJOR", "MINOR"] = Field(
+        default="MAJOR",
+        description="Severity: CRITICAL (breached constraint, deferred pricing, missing SLA), MAJOR (vague params, missing feature), MINOR (tone/polish)"
+    )
     title: str = Field(description="Short descriptive issue title e.g. 'Missing: PostgreSQL integration constraint'")
     rfp_citation: str = Field(description="Exact RFP citation and requirement reference")
     proposal_citation: str = Field(description="Proposal section citation")
