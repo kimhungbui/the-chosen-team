@@ -66,7 +66,7 @@ def create_proposal_scorer_agent(model_id: Optional[str] = None) -> Agent:
         os.environ["GOOGLE_API_KEY"] = api_key
         os.environ["GEMINI_API_KEY"] = api_key
 
-    selected_model = model_id or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    selected_model = model_id or os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     model = Gemini(id=selected_model, api_key=api_key)
 
     agent = Agent(

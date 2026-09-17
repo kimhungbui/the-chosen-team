@@ -33,7 +33,7 @@ def create_dataset_generator_agent() -> Agent:
         os.environ["GOOGLE_API_KEY"] = api_key
         os.environ["GEMINI_API_KEY"] = api_key
 
-    model_id = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    model_id = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     model = Gemini(id=model_id, api_key=api_key)
 
     agent = Agent(

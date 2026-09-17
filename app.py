@@ -11,10 +11,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import schema.proposal_models
-importlib.reload(schema.proposal_models)
-import services.scoring_engine
-importlib.reload(services.scoring_engine)
 from services.scoring_engine import evaluate_proposal, DEFAULT_WEIGHTS
 from data.sample_data import SAMPLE_DATASETS
 from schema.proposal_models import TrafficLight, RequirementCoverageStatus, AmbiguousRequirement
@@ -283,8 +279,8 @@ with st.sidebar:
     use_llm_mode = st.toggle("Use Agno Gemini LLM Multi-Agent", value=True)
     fallback_on_error = st.toggle(
         "Auto-fallback to Rule Engine on Error",
-        value=False,
-        help="When disabled (recommended), errors during AI agent execution will be shown explicitly instead of falling back."
+        value=True,
+        help="When enabled (recommended), errors during AI agent execution (e.g. 429 quota exhaustion) will gracefully switch to the dynamic rule engine with an explanatory notice."
     )
     has_api_key = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
     if has_api_key:

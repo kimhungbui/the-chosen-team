@@ -1,3 +1,4 @@
+
 """
 RFP Analyzer Agent built using Agno framework with Google Gemini.
 Extracts structured requirements, business goals, constraints, and dynamic rubric weightings from RFP text.
@@ -20,7 +21,7 @@ def create_rfp_analyzer_agent(model_id: Optional[str] = None) -> Agent:
         os.environ["GOOGLE_API_KEY"] = api_key
         os.environ["GEMINI_API_KEY"] = api_key
 
-    selected_model = model_id or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    selected_model = model_id or os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     model = Gemini(id=selected_model, api_key=api_key)
 
     agent = Agent(

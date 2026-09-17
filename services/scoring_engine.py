@@ -18,6 +18,7 @@ from schema.proposal_models import (
     TrafficLight,
     RequirementCoverageStatus,
     AmbiguousRequirement,
+    ExtractedRFP,
 )
 from agents.proposal_scorer import create_proposal_scorer_agent
 from agents.rfp_analyzer import create_rfp_analyzer_agent
@@ -442,7 +443,6 @@ def _evaluate_with_llm(
         f"Extract all atomic requirements, commercial constraints, and implicit client priorities from this RFP:\n\n{rfp_text}"
     )
     extracted_rfp = extracted_rfp_resp.content
-
     # Format extracted requirements summary for Stage 2
     req_summary = []
     if hasattr(extracted_rfp, "requirements") and extracted_rfp.requirements:
@@ -482,7 +482,38 @@ MANDATORY INSTRUCTIONS:
 4. Set `detected_client_priorities` to reflect the client's strategic mindset.
 """
     response = scorer.run(prompt)
-    report: ProposalEvaluationReport = response.content
+    report = response.content
+
+    # Robust check: handle Pydantic objects across importlib reloads, or dict/JSON string responses
+    is_valid_report = hasattr(report, "rubric_scores") and hasattr(report, "overall_score_pct")
+
+    if not is_valid_report:
+        if isinstance(report, dict):
+            try:
+                report = ProposalEvaluationReport.model_validate(report)
+                is_valid_report = True
+            except Exception:
+                pass
+        elif isinstance(report, str):
+            try:
+                report = ProposalEvaluationReport.model_validate_json(report)
+                is_valid_report = True
+            except Exception:
+                pass
+
+    if not is_valid_report:
+        err_str = str(report)
+        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+            raise RuntimeError(
+                "Google Gemini API Quota Exhausted (HTTP 429 RESOURCE_EXHAUSTED): "
+                "Your Google Cloud / AI Studio project has exceeded its monthly spending cap. "
+                "Please manage your spend cap at https://ai.studio/spend, or turn OFF 'Use Agno Gemini LLM Multi-Agent' "
+                "(or turn ON 'Auto-fallback to Rule Engine on Error') in the sidebar."
+            )
+        elif "API_KEY_INVALID" in err_str or "400" in err_str or "403" in err_str:
+            raise RuntimeError(f"Google Gemini API Authentication/Permission Error: {err_str[:200]}")
+        else:
+            raise RuntimeError(f"Proposal Scorer Agent failed to produce evaluation report: {err_str[:200]}")
 
     if not getattr(report, "detected_client_priorities", None) and detected_priorities:
         report.detected_client_priorities = detected_priorities
