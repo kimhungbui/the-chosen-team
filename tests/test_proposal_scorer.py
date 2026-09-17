@@ -195,4 +195,63 @@ def test_error_handling_and_no_silent_fallback(monkeypatch):
     assert rep.llm_error is not None
 
 
+def test_company_name_mismatch_sets_score_to_zero():
+    # Cross-dataset mismatch: NordFrame RFP + MediCare Proposal
+    with open("sample_data/rfp_nordframe.md") as f:
+        rfp_nordframe = f.read()
+    with open("sample_data/healthcare_telehealth/response_3_strong.md") as f:
+        prop_medicare = f.read()
+
+    report_mismatch = evaluate_proposal(
+        rfp_text=rfp_nordframe,
+        proposal_text=prop_medicare,
+        force_fallback=True,
+    )
+
+    # Must be 0% and RED
+    assert report_mismatch.overall_score_pct == 0.0, "Mismatched company name must result in 0% score"
+    assert report_mismatch.overall_traffic_light == TrafficLight.RED
+    assert "FATAL DISQUALIFICATION" in report_mismatch.executive_summary
+    assert "Target Company Mismatch" in report_mismatch.executive_summary
+
+    # All rubric scores should have 0.0 weighted score
+    for rubric in report_mismatch.rubric_scores:
+        assert rubric.weighted_score == 0.0
+        assert rubric.traffic_light == TrafficLight.RED
+
+    # Must have a critical disqualification gap
+    disq_gap = next((g for g in report_mismatch.requirement_gaps if g.requirement_id == "REQ-DISQUALIFY"), None)
+    assert disq_gap is not None
+    assert disq_gap.priority_level == "CRITICAL"
+
+
+def test_custom_company_name_mismatch_and_match():
+    rfp = """
+    # Request for Proposal
+    **Client:** Tesla Motors Inc.
+    ## Requirements
+    1. Factory telemetry dashboard.
+    """
+
+    prop_wrong = """
+    # Proposal for Ford Motor Company
+    **Prepared for:** Ford Motor Company
+    We propose telemetry dashboards for Ford factories.
+    """
+
+    prop_right = """
+    # Proposal for Tesla Motors Inc.
+    **Prepared for:** Tesla Motors Inc.
+    We propose telemetry dashboards for Tesla factories.
+    """
+
+    rep_wrong = evaluate_proposal(rfp, prop_wrong, force_fallback=True)
+    assert rep_wrong.overall_score_pct == 0.0
+    assert rep_wrong.overall_traffic_light == TrafficLight.RED
+
+    rep_right = evaluate_proposal(rfp, prop_right, force_fallback=True)
+    assert rep_right.overall_score_pct > 0.0
+
+
+
 

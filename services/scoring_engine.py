@@ -9,7 +9,7 @@ import os
 import re
 import logging
 import traceback
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Tuple
 from schema.proposal_models import (
     ProposalEvaluationReport,
     CriterionScore,
@@ -61,6 +61,187 @@ def normalize_criterion_id(raw_id: str) -> str:
     return raw
 
 
+def clean_company_name(raw: str) -> str:
+    cleaned = re.sub(r"\(fictional\)|\(fictitious\)", "", raw, flags=re.I)
+    cleaned = re.sub(r"[\*#_`]", "", cleaned)
+    return cleaned.strip()
+
+
+def get_company_core_tokens(name: str) -> set:
+    norm = re.sub(
+        r"\b(?:gmbh|inc\.?|llc|corp\.?|corporation|ltd\.?|co\.?|ag|solutions|systems|logistics|technologies|tech)\b",
+        "",
+        name,
+        flags=re.I,
+    )
+    tokens = set(re.findall(r"[a-z0-9]{3,}", norm.lower()))
+    return tokens
+
+
+def extract_rfp_target_company(rfp_text: str) -> str:
+    client_match = re.search(r"(?:\*\*Client:\*\*|Client:)\s*([^\n\r]+)", rfp_text, re.I)
+    if client_match:
+        return clean_company_name(client_match.group(1))
+    lead_match = re.search(
+        r"(?:^|\n)\s*([A-Z][A-Za-z0-9\s,\.&]+?)\s+is a (?:leading|regional|global|fast-growing)",
+        rfp_text,
+    )
+    if lead_match:
+        return clean_company_name(lead_match.group(1))
+    return ""
+
+
+def extract_proposal_target_company(proposal_text: str) -> str:
+    prep_match = re.search(
+        r"(?:\*\*Prepared for:\*\*|Prepared for:|Submitted to:|\*\*Submitted to:\*\*|Target Client:|\*\*Client:\*\*|Client:)\s*([^\n\r]+)",
+        proposal_text,
+        re.I,
+    )
+    if prep_match:
+        return clean_company_name(prep_match.group(1))
+
+    title_match = re.search(
+        r"^#+\s*(?:Comprehensive |Draft |Technical |Visionary )?Proposal:?\s*(?:.*?)(?:for|to)\s+([^\n\r]+)",
+        proposal_text,
+        re.M | re.I,
+    )
+    if title_match:
+        cand = clean_company_name(title_match.group(1))
+        if not re.search(r"\b(?:inventory|visibility|dashboard|solution|platform|engine|suite|system)\b", cand, re.I):
+            return cand
+        else:
+            end_match = re.search(r"(?:for|to)\s+([A-Z][A-Za-z0-9\s,\.&]+)$", cand, re.I)
+            if end_match:
+                return clean_company_name(end_match.group(1))
+
+    pres_match = re.search(
+        r"(?:present|submit) (?:our|this) proposal (?:for|to)\s+([A-Z][A-Za-z0-9\s,\.&]+?(?:GmbH|Inc\.?|LLC|Corp\.?|Ltd\.?|Systems|Logistics)?)",
+        proposal_text,
+        re.I,
+    )
+    if pres_match:
+        return clean_company_name(pres_match.group(1))
+
+    return ""
+
+
+def check_company_mismatch(rfp_text: str, proposal_text: str) -> Tuple[bool, str, str]:
+    """
+    Checks if the proposal targets a different client company than the issuing RFP client.
+    Returns (is_mismatch, rfp_client, proposal_target).
+    """
+    rfp_client = extract_rfp_target_company(rfp_text)
+    prop_target = extract_proposal_target_company(proposal_text)
+
+    rfp_tokens = get_company_core_tokens(rfp_client) if rfp_client else set()
+    prop_tokens = get_company_core_tokens(prop_target) if prop_target else set()
+
+    # Both explicitly state a company name and their distinctive core tokens have zero overlap
+    if rfp_tokens and prop_tokens:
+        overlap = rfp_tokens.intersection(prop_tokens)
+        if not overlap:
+            return True, rfp_client, prop_target
+
+    # Proposal specifies a target company, but the RFP client name does not appear anywhere in the proposal text
+    if rfp_tokens and prop_target:
+        p_lower = proposal_text.lower()
+        if not any(tok in p_lower for tok in rfp_tokens):
+            return True, rfp_client, prop_target
+
+    return False, rfp_client, prop_target
+
+
+def build_disqualified_mismatch_report(
+    rfp_client: str,
+    prop_target: str,
+    proposal_title: str,
+    rfp_title: str,
+    weights: Dict[str, float],
+    rfp_metrics: Optional[Dict[str, Any]] = None,
+    proposal_metrics: Optional[Dict[str, Any]] = None,
+    engine_mode: str = "rule_engine",
+) -> ProposalEvaluationReport:
+    """Builds an immediate 0% disqualification report when proposal targets a different company than RFP."""
+    exec_summary = (
+        f"🚨 **FATAL DISQUALIFICATION (Score: 0.0%): Target Company Mismatch.** "
+        f"The client RFP was issued by **'{rfp_client}'**, but the submitted proposal is addressed to **'{prop_target}'**. "
+        f"In commercial procurement, submitting a proposal that targets a different company results in immediate disqualification "
+        f"and an automatic 0% score."
+    )
+
+    rubric_names = {
+        "problem_understanding": "Problem Understanding",
+        "scope_deliverables_clarity": "Scope & Deliverables Clarity",
+        "pricing_clarity": "Pricing Clarity",
+        "timeline_clarity": "Timeline Clarity",
+        "completeness_vs_rfp": "Completeness vs RFP",
+        "tone_persuasiveness": "Tone & Persuasiveness",
+        "risk_transparency": "Risk & Assumptions Transparency",
+    }
+
+    rubric_scores = []
+    for cid, cname in rubric_names.items():
+        w = weights.get(cid, 14.28)
+        rubric_scores.append(
+            CriterionScore(
+                criterion_id=cid,
+                criterion_name=cname,
+                score_1_to_5=1.0,
+                weight=w,
+                weighted_score=0.0,
+                traffic_light=TrafficLight.RED,
+                rationale=f"Automatic 0% Score: Fatal Target Company Mismatch. The RFP was issued by '{rfp_client}', but this proposal targets '{prop_target}'.",
+                score_factors_high=[],
+                score_factors_low=[
+                    f"Proposal targets '{prop_target}' instead of RFP issuing client '{rfp_client}'",
+                    "Immediate fatal disqualification penalty applied (Score set to 0%)",
+                ],
+                citations=[
+                    Citation(
+                        rfp_section="Client Organization",
+                        rfp_quote=f"Issuing Client: {rfp_client}",
+                        proposal_section="Target Client",
+                        proposal_quote=f"Addressed Target: {prop_target}",
+                    )
+                ],
+                suggested_fixes=[f"Retarget the entire proposal to address '{rfp_client}' instead of '{prop_target}'."],
+            )
+        )
+
+    gaps = [
+        RequirementGap(
+            requirement_id="REQ-DISQUALIFY",
+            requirement_title="Target Client Organization Alignment",
+            status=RequirementCoverageStatus.CONTRADICTED,
+            priority_level="CRITICAL",
+            rfp_snippet=f"Client Organization: {rfp_client}",
+            proposal_snippet=f"Proposal Target: {prop_target}",
+            issue_description=f"Fatal target organization mismatch: The proposal addresses '{prop_target}' instead of the issuing client '{rfp_client}'. A bid submitted for a different company cannot be considered.",
+            placement_anchor="Proposal Title, Executive Summary, and All Client References",
+            actionable_rewrite=f"Retarget the entire proposal to '{rfp_client}'. Replace all occurrences of '{prop_target}' with '{rfp_client}', and rebuild the solution scope around '{rfp_client}'s specific operational requirements.",
+        )
+    ]
+
+    return ProposalEvaluationReport(
+        proposal_title=proposal_title,
+        rfp_title=rfp_title,
+        detected_client_priorities=f"Target client company mismatch: RFP issued by '{rfp_client}', Proposal addressed to '{prop_target}'.",
+        overall_score_pct=0.0,
+        overall_traffic_light=TrafficLight.RED,
+        executive_summary=exec_summary,
+        rubric_scores=rubric_scores,
+        requirement_gaps=gaps,
+        top_strengths=[],
+        top_risks_and_remediations=[
+            f"🚨 FATAL DISQUALIFICATION: Proposal targets '{prop_target}' instead of '{rfp_client}'. You must completely retarget this proposal before submission."
+        ],
+        rfp_metrics=rfp_metrics or {},
+        proposal_metrics=proposal_metrics or {},
+        engine_mode=engine_mode,
+        engine_notice=f"🚨 Fatal Target Company Mismatch: Proposal targets '{prop_target}' instead of '{rfp_client}'. Score set to 0.0%.",
+    )
+
+
 def evaluate_proposal(
     rfp_text: str,
     proposal_text: str,
@@ -82,6 +263,24 @@ def evaluate_proposal(
         raise ValueError("Cannot evaluate proposal: Draft Proposal text is completely empty.")
 
     weights = custom_weights or DEFAULT_WEIGHTS
+
+    # Target Company Mismatch Check: Enforce 0% score if proposal targets a different company
+    is_mismatched, rfp_client, prop_target = check_company_mismatch(rfp_text, proposal_text)
+    if is_mismatched:
+        logger.warning(
+            f"Target company mismatch detected: RFP Client='{rfp_client}' vs Proposal Target='{prop_target}'. "
+            f"Enforcing 0% disqualification score."
+        )
+        return build_disqualified_mismatch_report(
+            rfp_client=rfp_client,
+            prop_target=prop_target,
+            proposal_title=proposal_title,
+            rfp_title=rfp_title,
+            weights=weights,
+            rfp_metrics=rfp_metrics,
+            proposal_metrics=proposal_metrics,
+            engine_mode="rule_engine" if force_fallback else "agno_llm",
+        )
 
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
@@ -216,7 +415,7 @@ def _extract_rfp_metadata(rfp_text: str) -> Dict[str, Any]:
     if client_match:
         raw_client = client_match.group(1).strip()
     else:
-        lead_match = re.search(r"([A-Z][A-Za-z0-9\s,\.&]+?)\s+is a (?:leading|regional|global|fast-growing)", rfp_text)
+        lead_match = re.search(r"(?:^|\n)\s*([A-Z][A-Za-z0-9\s,\.&]+?)\s+is a (?:leading|regional|global|fast-growing)", rfp_text)
         raw_client = lead_match.group(1).strip() if lead_match else "the Client"
     client_name = re.sub(r"\(fictional\)|\(fictitious\)", "", raw_client, flags=re.I).strip()
     

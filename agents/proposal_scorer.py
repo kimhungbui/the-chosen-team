@@ -34,6 +34,15 @@ CRITICAL SCORING RULES:
   * `placement_anchor`: State precisely WHERE in the proposal this fix must be added (e.g. "Insert under Section 3 'Proposed Solution' after bullet 2", "Add as new subsection '4.1 SLA Support Matrix'", "Replace Section 2 paragraph 1").
   * `actionable_rewrite`: Provide a fully fleshed out, copy-pasteable paragraph or table rewrite ready to insert directly into the proposal draft.
 - In `detected_client_priorities`, capture the client's underlying strategic mindset (Level 3 insight).
+- MANDATORY FATAL DISQUALIFICATION RULE — TARGET COMPANY MISMATCH:
+  * Extract the target client/issuing company name from the RFP ("Target Company", e.g. NordFrame Logistics).
+  * Extract the target client/company that the proposal is addressed to (from proposal title, "Prepared for:", "Submitted to:", or document body).
+  * IF the proposal names, targets, or is addressed to a DIFFERENT company than the RFP's target client (e.g. RFP is issued by 'NordFrame Logistics' but proposal is addressed to 'MediCare Systems', 'Global Payments', or 'Acme Corp'):
+    - You MUST set `overall_score_pct = 0.0`
+    - Set `overall_traffic_light = "RED"`
+    - Set all rubric scores to 1.0 (with 0.0 weighted score)
+    - In `executive_summary`, state prominently: "🚨 FATAL DISQUALIFICATION (Score: 0.0%): Target Company Mismatch. The proposal is targeted for a different company than the issuing RFP client. In procurement, submitting a proposal to the wrong organization results in an automatic 0% score."
+    - In `requirement_gaps`, include a CRITICAL gap with `requirement_id = 'REQ-DISQUALIFY'` detailing the company name mismatch.
 """
 
 

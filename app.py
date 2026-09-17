@@ -406,145 +406,154 @@ with col1:
     if notice_txt and str(notice_txt).strip().lower() not in ["", "null", "none"]:
         st.warning(f"ℹ️ {notice_txt}")
 
+with col2:
+    st.metric("Overall Weighted Score", f"{report.overall_score_pct}%")
 
-    with col2:
-        st.metric("Overall Weighted Score", f"{report.overall_score_pct}%")
+with col3:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if report.overall_score_pct == 0.0:
+        st.markdown('<span class="badge-red">🚨 0% DISQUALIFIED</span>', unsafe_allow_html=True)
+    elif report.overall_traffic_light == TrafficLight.GREEN:
+        st.markdown('<span class="badge-green">🟢 ACCEPTABLE / READY</span>', unsafe_allow_html=True)
+    elif report.overall_traffic_light == TrafficLight.YELLOW:
+        st.markdown('<span class="badge-yellow">🟡 REVISION REQUIRED</span>', unsafe_allow_html=True)
+    else:
+        st.markdown('<span class="badge-red">🔴 HIGH RISK / NON-COMPLIANT</span>', unsafe_allow_html=True)
 
-    with col3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if report.overall_traffic_light == TrafficLight.GREEN:
-            st.markdown('<span class="badge-green">🟢 ACCEPTABLE / READY</span>', unsafe_allow_html=True)
-        elif report.overall_traffic_light == TrafficLight.YELLOW:
-            st.markdown('<span class="badge-yellow">🟡 REVISION REQUIRED</span>', unsafe_allow_html=True)
-        else:
-            st.markdown('<span class="badge-red">🔴 HIGH RISK / NON-COMPLIANT</span>', unsafe_allow_html=True)
+if report.overall_score_pct == 0.0:
+    st.error(
+        "🚨 **FATAL DISQUALIFICATION (Overall Score: 0%): Target Company Mismatch**\n\n"
+        "The proposal targets a different client company than the issuing RFP client. "
+        "In commercial procurement, submitting a proposal for the wrong client organization results in immediate disqualification."
+    )
 
-    st.markdown("---")
-    if getattr(report, "detected_client_priorities", None):
-        st.info(f"🎯 **Detected Client Strategic Priorities (Level 3 Insight):**\n\n{report.detected_client_priorities}")
+st.markdown("---")
+if getattr(report, "detected_client_priorities", None):
+    st.info(f"🎯 **Detected Client Strategic Priorities (Level 3 Insight):**\n\n{report.detected_client_priorities}")
 
-    st.markdown(f"#### 💡 Executive Verdict\n{report.executive_summary}")
-    st.markdown("---")
+st.markdown(f"#### 💡 Executive Verdict\n{report.executive_summary}")
+st.markdown("---")
 
-    # Main Analysis Tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📊 7-Criterion Scorecard",
-        "🎯 RFP Requirement Traceability Matrix",
-        "✍️ Actionable Paragraph Rewrites",
-        "🔍 Side-by-Side Document Inspector"
-    ])
+# Main Analysis Tabs
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📊 7-Criterion Scorecard",
+    "🎯 RFP Requirement Traceability Matrix",
+    "✍️ Actionable Paragraph Rewrites",
+    "🔍 Side-by-Side Document Inspector"
+])
 
-    # TAB 1: 7-Criterion Scorecard
-    with tab1:
-        st.markdown("### 7 Core Scoring Rubrics (Appendix A)")
-        for crit in report.rubric_scores:
-            with st.container():
-                c_col1, c_col2, c_col3 = st.columns([3, 1, 1])
-                with c_col1:
-                    st.markdown(f"#### {crit.criterion_name}")
-                with c_col2:
-                    st.markdown(f"**Score:** `{crit.score_1_to_5} / 5.0` (Weight: `{crit.weight}%`)")
-                with c_col3:
-                    if crit.traffic_light == TrafficLight.GREEN:
-                        st.markdown('<span class="badge-green">GREEN</span>', unsafe_allow_html=True)
-                    elif crit.traffic_light == TrafficLight.YELLOW:
-                        st.markdown('<span class="badge-yellow">YELLOW</span>', unsafe_allow_html=True)
-                    else:
-                        st.markdown('<span class="badge-red">RED</span>', unsafe_allow_html=True)
+# TAB 1: 7-Criterion Scorecard
+with tab1:
+    st.markdown("### 7 Core Scoring Rubrics (Appendix A)")
+    for crit in report.rubric_scores:
+        with st.container():
+            c_col1, c_col2, c_col3 = st.columns([3, 1, 1])
+            with c_col1:
+                st.markdown(f"#### {crit.criterion_name}")
+            with c_col2:
+                st.markdown(f"**Score:** `{crit.score_1_to_5} / 5.0` (Weight: `{crit.weight}%`)")
+            with c_col3:
+                if crit.traffic_light == TrafficLight.GREEN:
+                    st.markdown('<span class="badge-green">GREEN</span>', unsafe_allow_html=True)
+                elif crit.traffic_light == TrafficLight.YELLOW:
+                    st.markdown('<span class="badge-yellow">YELLOW</span>', unsafe_allow_html=True)
+                else:
+                    st.markdown('<span class="badge-red">RED</span>', unsafe_allow_html=True)
 
-                st.progress(crit.score_1_to_5 / 5.0)
-                st.markdown(f"**Score Rationale:** {crit.rationale}")
+            st.progress(crit.score_1_to_5 / 5.0)
+            st.markdown(f"**Score Rationale:** {crit.rationale}")
 
-                # Why High / Why Low Breakdown
-                if crit.score_factors_high or crit.score_factors_low:
-                    f_col1, f_col2 = st.columns(2)
-                    with f_col1:
-                        if crit.score_factors_high:
-                            st.markdown("🟢 **Why Score is High (Strengths):**")
-                            for h in crit.score_factors_high:
-                                st.markdown(f"- {h}")
-                    with f_col2:
-                        if crit.score_factors_low:
-                            st.markdown("🔴 **Why Score is Penalized (Weaknesses / Gaps):**")
-                            for l in crit.score_factors_low:
-                                st.markdown(f"- {l}")
+            # Why High / Why Low Breakdown
+            if crit.score_factors_high or crit.score_factors_low:
+                f_col1, f_col2 = st.columns(2)
+                with f_col1:
+                    if crit.score_factors_high:
+                        st.markdown("🟢 **Why Score is High (Strengths):**")
+                        for h in crit.score_factors_high:
+                            st.markdown(f"- {h}")
+                with f_col2:
+                    if crit.score_factors_low:
+                        st.markdown("🔴 **Why Score is Penalized (Weaknesses / Gaps):**")
+                        for l in crit.score_factors_low:
+                            st.markdown(f"- {l}")
 
-                if crit.citations:
-                    with st.expander("📍 View Document Citations (RFP vs Proposal)"):
-                        for cit in crit.citations:
-                            st.markdown(f"""
-                            <div class="citation-box">
-                                📌 <b>RFP ({cit.rfp_section}):</b> <i>"{cit.rfp_quote}"</i><br>
-                                📄 <b>Proposal ({cit.proposal_section}):</b> <i>"{cit.proposal_quote}"</i>
-                            </div>
-                            """, unsafe_allow_html=True)
+            if crit.citations:
+                with st.expander("📍 View Document Citations (RFP vs Proposal)"):
+                    for cit in crit.citations:
+                        st.markdown(f"""
+                        <div class="citation-box">
+                            📌 <b>RFP ({cit.rfp_section}):</b> <i>"{cit.rfp_quote}"</i><br>
+                            📄 <b>Proposal ({cit.proposal_section}):</b> <i>"{cit.proposal_quote}"</i>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-                if crit.suggested_fixes:
-                    st.caption("🔧 **Action Items:** " + " | ".join(crit.suggested_fixes))
-
-                st.markdown("---")
-
-    # TAB 2: Requirement Traceability Matrix
-    with tab2:
-        st.markdown("### 🎯 Mandatory RFP Requirement Traceability & Compliance Matrix")
-        st.caption("Detailed audit verifying how the proposal addresses each explicit client requirement and constraint from the RFP.")
-
-        if not report.requirement_gaps:
-            st.success("🎉 Excellent! 100% requirement coverage detected with zero missing requirements.")
-        else:
-            crit_count = sum(1 for g in report.requirement_gaps if getattr(g, "priority_level", "HIGH") == "CRITICAL")
-            high_count = sum(1 for g in report.requirement_gaps if getattr(g, "priority_level", "HIGH") == "HIGH")
-            med_count = sum(1 for g in report.requirement_gaps if getattr(g, "priority_level", "HIGH") == "MEDIUM")
-
-            m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-            m_col1.metric("Total Identified Gaps", len(report.requirement_gaps))
-            m_col2.metric("Critical Gaps (Disqualifiers)", crit_count)
-            m_col3.metric("High Priority Gaps", high_count)
-            m_col4.metric("Medium Polish Items", med_count)
+            if crit.suggested_fixes:
+                st.caption("🔧 **Action Items:** " + " | ".join(crit.suggested_fixes))
 
             st.markdown("---")
 
-            for gap in report.requirement_gaps:
-                p_level = getattr(gap, "priority_level", "HIGH")
-                p_badge = "🚨 CRITICAL" if p_level == "CRITICAL" else ("⚠️ HIGH" if p_level == "HIGH" else "ℹ️ MEDIUM")
+# TAB 2: Requirement Traceability Matrix
+with tab2:
+    st.markdown("### 🎯 Mandatory RFP Requirement Traceability & Compliance Matrix")
+    st.caption("Detailed audit verifying how the proposal addresses each explicit client requirement and constraint from the RFP.")
+
+    if not report.requirement_gaps:
+        st.success("🎉 Excellent! 100% requirement coverage detected with zero missing requirements.")
+    else:
+        crit_count = sum(1 for g in report.requirement_gaps if getattr(g, "priority_level", "HIGH") == "CRITICAL")
+        high_count = sum(1 for g in report.requirement_gaps if getattr(g, "priority_level", "HIGH") == "HIGH")
+        med_count = sum(1 for g in report.requirement_gaps if getattr(g, "priority_level", "HIGH") == "MEDIUM")
+
+        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        m_col1.metric("Total Identified Gaps", len(report.requirement_gaps))
+        m_col2.metric("Critical Gaps (Disqualifiers)", crit_count)
+        m_col3.metric("High Priority Gaps", high_count)
+        m_col4.metric("Medium Polish Items", med_count)
+
+        st.markdown("---")
+
+        for gap in report.requirement_gaps:
+            p_level = getattr(gap, "priority_level", "HIGH")
+            p_badge = "🚨 CRITICAL" if p_level == "CRITICAL" else ("⚠️ HIGH" if p_level == "HIGH" else "ℹ️ MEDIUM")
+            
+            with st.expander(f"{p_badge} | {gap.requirement_id}: {gap.requirement_title} — Status: {gap.status.value}", expanded=True):
+                g_col1, g_col2 = st.columns(2)
+                with g_col1:
+                    st.markdown(f"**📌 Demanded in Client RFP:**\n> {gap.rfp_snippet}")
+                with g_col2:
+                    st.markdown(f"**📄 Stated in Proposal Draft:**\n> {gap.proposal_snippet if gap.proposal_snippet else '*(Omitted / No mention in document)*'}")
                 
-                with st.expander(f"{p_badge} | {gap.requirement_id}: {gap.requirement_title} — Status: {gap.status.value}", expanded=True):
-                    g_col1, g_col2 = st.columns(2)
-                    with g_col1:
-                        st.markdown(f"**📌 Demanded in Client RFP:**\n> {gap.rfp_snippet}")
-                    with g_col2:
-                        st.markdown(f"**📄 Stated in Proposal Draft:**\n> {gap.proposal_snippet if gap.proposal_snippet else '*(Omitted / No mention in document)*'}")
-                    
-                    st.error(f"**Gap Analysis:** {gap.issue_description}")
-                    if getattr(gap, "placement_anchor", None):
-                        st.info(f"**📍 Suggested Proposal Placement Anchor:** {gap.placement_anchor}")
-
-    # TAB 3: Actionable Paragraph Rewrites
-    with tab3:
-        st.markdown("### ✍️ Specific & Actionable Paragraph Rewrites")
-        st.caption("Copy and paste these pre-formatted rewritten sections directly into your proposal draft at the indicated section locations.")
-
-        if not report.requirement_gaps:
-            st.info("No paragraph rewrites required! The proposal already satisfies all RFP requirements.")
-        else:
-            for i, gap in enumerate(report.requirement_gaps, 1):
-                p_level = getattr(gap, "priority_level", "HIGH")
-                p_badge = "🔴 CRITICAL" if p_level == "CRITICAL" else ("🟡 HIGH" if p_level == "HIGH" else "🔵 MEDIUM")
-                st.markdown(f"#### Fix #{i}: {gap.requirement_title} (`{gap.requirement_id}`) — {p_badge}")
-                st.markdown(f"**Issue Description:** {gap.issue_description}")
+                st.error(f"**Gap Analysis:** {gap.issue_description}")
                 if getattr(gap, "placement_anchor", None):
-                    st.markdown(f"📍 **Where to Insert in Proposal:** `{gap.placement_anchor}`")
-                st.code(gap.actionable_rewrite, language="markdown")
-                st.markdown("---")
+                    st.info(f"**📍 Suggested Proposal Placement Anchor:** {gap.placement_anchor}")
 
-    # TAB 4: Document Inspector
-    with tab4:
-        st.markdown("### 🔍 Side-by-Side Document Inspector")
-        doc_col1, doc_col2 = st.columns(2)
-        with doc_col1:
-            st.markdown(f"#### Client RFP ({report.rfp_title})")
-            st.text_area("RFP Raw Text", value=rfp_text, height=500, key="rfp_view")
-        with doc_col2:
-            st.markdown(f"#### Draft Proposal ({report.proposal_title})")
-            st.text_area("Proposal Raw Text", value=proposal_text, height=500, key="prop_view")
+# TAB 3: Actionable Paragraph Rewrites
+with tab3:
+    st.markdown("### ✍️ Specific & Actionable Paragraph Rewrites")
+    st.caption("Copy and paste these pre-formatted rewritten sections directly into your proposal draft at the indicated section locations.")
+
+    if not report.requirement_gaps:
+        st.info("No paragraph rewrites required! The proposal already satisfies all RFP requirements.")
+    else:
+        for i, gap in enumerate(report.requirement_gaps, 1):
+            p_level = getattr(gap, "priority_level", "HIGH")
+            p_badge = "🔴 CRITICAL" if p_level == "CRITICAL" else ("🟡 HIGH" if p_level == "HIGH" else "🔵 MEDIUM")
+            st.markdown(f"#### Fix #{i}: {gap.requirement_title} (`{gap.requirement_id}`) — {p_badge}")
+            st.markdown(f"**Issue Description:** {gap.issue_description}")
+            if getattr(gap, "placement_anchor", None):
+                st.markdown(f"📍 **Where to Insert in Proposal:** `{gap.placement_anchor}`")
+            st.code(gap.actionable_rewrite, language="markdown")
+            st.markdown("---")
+
+# TAB 4: Document Inspector
+with tab4:
+    st.markdown("### 🔍 Side-by-Side Document Inspector")
+    doc_col1, doc_col2 = st.columns(2)
+    with doc_col1:
+        st.markdown(f"#### Client RFP ({report.rfp_title})")
+        st.text_area("RFP Raw Text", value=rfp_text, height=500, key="rfp_view")
+    with doc_col2:
+        st.markdown(f"#### Draft Proposal ({report.proposal_title})")
+        st.text_area("Proposal Raw Text", value=proposal_text, height=500, key="prop_view")
+
 
