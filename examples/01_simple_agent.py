@@ -17,7 +17,7 @@ agent = Agent(
     name="General Assistant",
     model=get_model("gemini-2.5-flash"),
     instructions=[
-        "Provide concise, informative, and engaging answers.",
+        "Gia vang hom nay",
         "Format your responses in clean Markdown.",
     ],
     markdown=True,
