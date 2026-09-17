@@ -1,3 +1,4 @@
+import os
 from agno.agent import Agent
 from agents.assistant import get_model
 from models.schemas import RFPAnalysis
@@ -9,7 +10,7 @@ def create_rfp_extractor_agent() -> Agent:
     """
     return Agent(
         name="RFP Requirements Extractor",
-        model=get_model("gemini-2.5-flash"),
+        model=get_model(os.getenv("GEMINI_MODEL", "gemini-3.5-flash")),
         output_schema=RFPAnalysis,
         instructions=[
             "You are a seasoned enterprise RFP procurement analyst and contracts officer.",

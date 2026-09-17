@@ -1,3 +1,4 @@
+import os
 from agno.agent import Agent
 from agents.assistant import get_model
 from models.schemas import ComplianceMatrix
@@ -8,7 +9,7 @@ def create_compliance_auditor_agent() -> Agent:
     """
     return Agent(
         name="Compliance Auditor",
-        model=get_model("gemini-2.5-flash"),
+        model=get_model(os.getenv("GEMINI_MODEL", "gemini-3.5-flash")),
         output_schema=ComplianceMatrix,
         instructions=[
             "You are a rigorous, skeptical procurement auditor and compliance officer.",

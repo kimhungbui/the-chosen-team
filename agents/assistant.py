@@ -7,7 +7,7 @@ def get_model(model_id: str | None = None) -> Gemini:
     Returns configured Google Gemini model object.
     """
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    selected_model = model_id or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    selected_model = model_id or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
     return Gemini(id=selected_model, api_key=api_key)
 
 def create_assistant(
