@@ -477,6 +477,97 @@ function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// Universal file upload handler (supports .md, .txt, .pdf, .docx, .json)
+async function handleFileUpload(event, targetType) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  await processUploadedFile(file, targetType);
+}
+
+async function processUploadedFile(file, targetType) {
+  const metaBadge = document.getElementById(`${targetType}-meta`);
+  const textarea = document.getElementById(`${targetType}-input`);
+  const originalMeta = metaBadge.textContent;
+  metaBadge.textContent = `⏳ Loading ${file.name}...`;
+
+  try {
+    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+    
+    // For markdown / plain text, read directly in browser
+    if (['.md', '.markdown', '.txt', '.json'].includes(ext)) {
+      const text = await file.text();
+      textarea.value = text;
+      metaBadge.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+      showToast(`Uploaded ${file.name}`);
+      runEvaluation();
+    } else {
+      // Binary files (.pdf, .docx): send to backend /api/upload
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: file.name,
+              data: e.target.result
+            })
+          });
+          const data = await res.json();
+          if (data.error) {
+            alert(`Error reading ${file.name}: ${data.error}`);
+            metaBadge.textContent = originalMeta;
+          } else {
+            textarea.value = data.text;
+            const fmt = data.metadata?.format || 'Document';
+            metaBadge.textContent = `${file.name} (${fmt}, ${(file.size / 1024).toFixed(1)} KB)`;
+            showToast(`Loaded ${file.name} successfully!`);
+            runEvaluation();
+          }
+        } catch (err) {
+          alert(`Failed to parse file: ${err.message}`);
+          metaBadge.textContent = originalMeta;
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  } catch (err) {
+    alert(`Could not open file: ${err.message}`);
+    metaBadge.textContent = originalMeta;
+  }
+}
+
+function setupDropZones() {
+  ['rfp', 'proposal'].forEach(type => {
+    const zone = document.getElementById(`${type}-drop-zone`);
+    if (!zone) return;
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+      zone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.add('drag-over');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      zone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.remove('drag-over');
+      }, false);
+    });
+
+    zone.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      const file = dt.files?.[0];
+      if (file) {
+        processUploadedFile(file, type);
+      }
+    }, false);
+  });
+}
+
 // Initial Data Fetch
 async function initApp() {
   try {
@@ -493,8 +584,11 @@ async function initApp() {
     console.log('Using static sample fallback');
   }
 
+  setupDropZones();
+
   // Run initial evaluation
   runEvaluation();
 }
 
 document.addEventListener('DOMContentLoaded', initApp);
+

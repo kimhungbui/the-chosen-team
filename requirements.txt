@@ -5,3 +5,4 @@ python-dotenv>=1.0.0
 duckduckgo-search>=8.0.0
 ddgs>=9.0.0
 rich>=13.0.0
+pypdf>=4.0.0

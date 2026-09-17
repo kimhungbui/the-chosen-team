@@ -312,22 +312,73 @@ body {
   justify-content: space-between;
   align-items: center;
   background: var(--bg-surface-elevated);
-  padding: 0.6rem 1rem;
+  padding: 0.5rem 0.85rem;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   border: 1px solid var(--border-subtle);
   border-bottom: none;
+  gap: 0.5rem;
+}
+
+.header-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  overflow: hidden;
 }
 
 .pane-label {
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
 }
 
 .pane-meta {
   font-size: 0.75rem;
   font-family: var(--font-mono);
   color: var(--color-primary);
+  background: rgba(99, 102, 241, 0.1);
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.header-action-wrap {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.btn-file-upload {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.btn-file-upload:hover {
+  background: var(--color-primary);
+  color: #ffffff;
+  border-color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
+.editor-pane.drag-over .doc-textarea {
+  border-color: var(--color-primary);
+  background: rgba(99, 102, 241, 0.08);
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.3);
 }
 
 .doc-textarea {

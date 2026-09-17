@@ -12,6 +12,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from pipeline import evaluate_proposal, get_mock_evaluation_report
 from models.schemas import ProposalReviewReport, RequirementAudit, SuggestedFix, CriterionScore, ComplianceMatrix
 from guardrails.verifier import verify_citations_and_lines, enforce_mathematical_consistency
+from utils.file_loader import extract_text_from_pdf, extract_text_from_docx, load_document_file
+import base64
+import tempfile
 
 STATIC_DIR = Path(__file__).resolve().parent
 
@@ -171,6 +174,39 @@ class ProposalScorerServer(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/upload":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode("utf-8")
+            payload = json.loads(body)
+
+            filename = payload.get("filename", "document.txt")
+            b64_data = payload.get("data", "")
+            suffix = Path(filename).suffix.lower()
+
+            try:
+                raw_bytes = base64.b64decode(b64_data.split(",")[-1])
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(raw_bytes)
+                    tmp_path = Path(tmp.name)
+
+                text, meta = load_document_file(tmp_path)
+                meta["filename"] = filename
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"text": text, "metadata": meta}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
         if parsed.path == "/api/evaluate":
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode("utf-8")

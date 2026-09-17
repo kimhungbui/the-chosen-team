@@ -69,19 +69,35 @@
         </div>
 
         <div class="document-editors-grid">
-          <div class="editor-pane">
+          <div class="editor-pane" id="rfp-drop-zone">
             <div class="editor-header">
-              <span class="pane-label">📄 Client RFP (Requirement Spec)</span>
-              <span id="rfp-meta" class="pane-meta">rfp_nordframe.md</span>
+              <div class="header-title-wrap">
+                <span class="pane-label">📄 Client RFP (Requirement Spec)</span>
+                <span id="rfp-meta" class="pane-meta">rfp_nordframe.md</span>
+              </div>
+              <div class="header-action-wrap">
+                <input type="file" id="rfp-file-input" accept=".md,.txt,.pdf,.docx,.markdown,.json" style="display:none;" onchange="handleFileUpload(event, 'rfp')" />
+                <button class="btn-file-upload" type="button" onclick="document.getElementById('rfp-file-input').click()" title="Upload RFP (.md, .txt, .pdf, .docx)">
+                  📁 Upload File
+                </button>
+              </div>
             </div>
-            <textarea id="rfp-input" class="doc-textarea" placeholder="Paste or view Client RFP..."></textarea>
+            <textarea id="rfp-input" class="doc-textarea" placeholder="Paste or drag & drop Client RFP (.md, .txt, .pdf, .docx)..."></textarea>
           </div>
-          <div class="editor-pane">
+          <div class="editor-pane" id="proposal-drop-zone">
             <div class="editor-header">
-              <span class="pane-label">📝 Vendor Draft Proposal</span>
-              <span id="proposal-meta" class="pane-meta">response_1_weak.md</span>
+              <div class="header-title-wrap">
+                <span class="pane-label">📝 Vendor Draft Proposal</span>
+                <span id="proposal-meta" class="pane-meta">response_1_weak.md</span>
+              </div>
+              <div class="header-action-wrap">
+                <input type="file" id="proposal-file-input" accept=".md,.txt,.pdf,.docx,.markdown,.json" style="display:none;" onchange="handleFileUpload(event, 'proposal')" />
+                <button class="btn-file-upload" type="button" onclick="document.getElementById('proposal-file-input').click()" title="Upload Proposal (.md, .txt, .pdf, .docx)">
+                  📁 Upload File
+                </button>
+              </div>
             </div>
-            <textarea id="proposal-input" class="doc-textarea" placeholder="Paste or view Vendor Proposal..."></textarea>
+            <textarea id="proposal-input" class="doc-textarea" placeholder="Paste or drag & drop Vendor Proposal (.md, .txt, .pdf, .docx)..."></textarea>
           </div>
         </div>
 
