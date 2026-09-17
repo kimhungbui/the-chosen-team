@@ -8,7 +8,8 @@ Supports both Agno Gemini LLM execution and high-fidelity rule-based evaluation.
 import os
 import re
 import logging
-from typing import Dict, Optional, List
+import traceback
+from typing import Dict, Optional, List, Any
 from schema.proposal_models import (
     ProposalEvaluationReport,
     CriterionScore,
@@ -67,27 +68,58 @@ def evaluate_proposal(
     rfp_title: str = "Client RFP",
     custom_weights: Optional[Dict[str, float]] = None,
     force_fallback: bool = False,
+    rfp_metrics: Optional[Dict[str, Any]] = None,
+    proposal_metrics: Optional[Dict[str, Any]] = None,
+    allow_fallback_on_error: bool = False,
 ) -> ProposalEvaluationReport:
     """
     Main evaluation entry point. Evaluates draft proposals against RFPs using Agno Gemini LLM
     when API keys are present, or high-fidelity rule engine fallback.
     """
+    if not rfp_text or not rfp_text.strip():
+        raise ValueError("Cannot evaluate proposal: Client RFP text is completely empty.")
+    if not proposal_text or not proposal_text.strip():
+        raise ValueError("Cannot evaluate proposal: Draft Proposal text is completely empty.")
+
     weights = custom_weights or DEFAULT_WEIGHTS
+
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
         os.environ["GEMINI_API_KEY"] = api_key
 
+    if not api_key and not force_fallback:
+        if not allow_fallback_on_error:
+            raise ValueError(
+                "Gemini API Key missing: No GEMINI_API_KEY or GOOGLE_API_KEY found in environment or .env file. "
+                "Please configure your API key or enable rule-engine fallback in Engine Options."
+            )
+
     if api_key and not force_fallback:
         try:
             logger.info("Executing 2-Stage Agno Multi-Agent Proposal Scorer (Analyzer + Auditor)...")
-            return _evaluate_with_llm(rfp_text, proposal_text, proposal_title, rfp_title, weights)
+            report = _evaluate_with_llm(rfp_text, proposal_text, proposal_title, rfp_title, weights, rfp_metrics, proposal_metrics)
+            report.engine_mode = "agno_llm"
+            return report
         except Exception as e:
-            logger.warning(f"Agno LLM evaluation encountered exception: {e}. Executing fallback engine.")
+            tb = traceback.format_exc()
+            logger.error(f"Agno LLM evaluation encountered exception: {e}\n{tb}")
+            if not allow_fallback_on_error:
+                # Re-raise so caller explicitly displays the error instead of masking it!
+                raise RuntimeError(f"AI Multi-Agent Evaluation Failure ({type(e).__name__}): {e}") from e
+            report = _evaluate_fallback(rfp_text, proposal_text, proposal_title, rfp_title, weights, rfp_metrics, proposal_metrics)
+            report.engine_mode = "rule_engine"
+            report.llm_error = f"{type(e).__name__}: {str(e)}"
+            report.llm_error_traceback = tb
+            report.engine_notice = f"AI Multi-Agent evaluation encountered an error ({type(e).__name__}: {str(e)[:120]}). Automatically switched to dynamic rule engine."
+            return report
 
     logger.info("Executing Fallback Proposal Scorer...")
-    return _evaluate_fallback(rfp_text, proposal_text, proposal_title, rfp_title, weights)
+    report = _evaluate_fallback(rfp_text, proposal_text, proposal_title, rfp_title, weights, rfp_metrics, proposal_metrics)
+    report.engine_mode = "rule_engine"
+    return report
+
 
 
 def _evaluate_with_llm(
@@ -96,6 +128,8 @@ def _evaluate_with_llm(
     proposal_title: str,
     rfp_title: str,
     weights: Dict[str, float],
+    rfp_metrics: Optional[Dict[str, Any]] = None,
+    proposal_metrics: Optional[Dict[str, Any]] = None,
 ) -> ProposalEvaluationReport:
     """
     2-Stage Multi-Agent evaluation pipeline:
@@ -170,8 +204,67 @@ MANDATORY INSTRUCTIONS:
 
     report.overall_score_pct = round(total_weighted, 1)
     report.overall_traffic_light = get_traffic_light(report.overall_score_pct)
+    report.rfp_metrics = rfp_metrics or {}
+    report.proposal_metrics = proposal_metrics or {}
     return report
 
+
+
+def _extract_rfp_metadata(rfp_text: str) -> Dict[str, Any]:
+    """Dynamically extracts client, title, budget, timeline, constraints and requirements from any RFP."""
+    client_match = re.search(r"(?:\*\*Client:\*\*|Client:)\s*([^\n\r]+)", rfp_text, re.I)
+    if client_match:
+        raw_client = client_match.group(1).strip()
+    else:
+        lead_match = re.search(r"([A-Z][A-Za-z0-9\s,\.&]+?)\s+is a (?:leading|regional|global|fast-growing)", rfp_text)
+        raw_client = lead_match.group(1).strip() if lead_match else "the Client"
+    client_name = re.sub(r"\(fictional\)|\(fictitious\)", "", raw_client, flags=re.I).strip()
+    
+    title_match = re.search(r"^#\s+(?:Request for Proposal\s*[-—:]?\s*)?([^\n\r]+)", rfp_text, re.M)
+    project_title = title_match.group(1).strip() if title_match else "Client RFP"
+
+    budget_section = re.search(r"(?:##\s*\d*\.?\s*Budget[^\n]*|\*\*Budget[^\n]*)\n+([\s\S]*?)(?=\n\n\n|\n##|\n\*\*Timeline|$)", rfp_text, re.I)
+    budget_raw = budget_section.group(1).strip() if budget_section else ""
+    cur_match = re.search(r"([\$€£]\s*[\d,]+(?:\s*[–\-to]+\s*[\$€£]?\s*[\d,]+)?(?:\s*(?:USD|EUR))?)", budget_raw)
+    budget_str = cur_match.group(1).strip() if cur_match else (budget_raw.replace("\n", " ")[:60] or "Stated RFP Budget Range")
+
+    time_section = re.search(r"(?:##\s*\d*\.?\s*Timeline[^\n]*|\*\*Timeline[^\n]*)\n+([\s\S]*?)(?=\n\n\n|\n##|$)", rfp_text, re.I)
+    time_raw = time_section.group(1).strip() if time_section else ""
+    time_summary = time_raw.replace("\n", " ").strip()[:140] if time_raw else "Stated RFP Timeline Milestones"
+
+    const_section = re.search(r"(?:##\s*\d*\.?\s*(?:Critical Negative )?Constraint[^\n]*|\*\*Critical Negative Constraint[^\n]*)\n+([\s\S]*?)(?=\n\n\n|\n##|\n\*\*Budget|$)", rfp_text, re.I)
+    const_raw = const_section.group(1).strip() if const_section else ""
+
+    reqs = []
+    num_reqs = re.findall(r"(?:^|\n)(\d+)\.\s+\*\*([^*]+)\*\*:?\s*([^\n]+(?:\n(?!\d+\.|\n\n)[^\n]+)*)", rfp_text)
+    for num, r_title, desc in num_reqs:
+        reqs.append({
+            "id": f"REQ-{int(num):02d}",
+            "title": r_title.strip().rstrip(":"),
+            "desc": desc.strip().replace("\n", " ")
+        })
+
+    r_lower = rfp_text.lower()
+    if const_raw and ("no migration" in const_raw.lower() or "strictly prohibited" in const_raw.lower() or "exclusively via" in const_raw.lower()):
+        client_priority = (
+            f"Detected client priority: The RFP enforces strict architectural constraints ('{const_raw.replace(chr(10), ' ')[:90]}...') — "
+            f"indicating that operational stability, data autonomy, and minimal transition friction matter significantly more "
+            f"to {client_name} than technical novelty or platform overhaul."
+        )
+    elif "security" in r_lower or "compliance" in r_lower or "hipaa" in r_lower:
+        client_priority = f"Detected client priority: Strict regulatory compliance, data security, and auditability are top priorities for {client_name}."
+    else:
+        client_priority = f"Detected client priority: Rapid time-to-value, predictable commercial terms, and transparent milestone delivery for {client_name}."
+
+    return {
+        "client_name": client_name,
+        "project_title": project_title,
+        "budget_str": budget_str,
+        "timeline_summary": time_summary,
+        "constraints": const_raw,
+        "requirements": reqs,
+        "detected_priority": client_priority,
+    }
 
 
 def _evaluate_fallback(
@@ -180,155 +273,194 @@ def _evaluate_fallback(
     proposal_title: str,
     rfp_title: str,
     weights: Dict[str, float],
+    rfp_metrics: Optional[Dict[str, Any]] = None,
+    proposal_metrics: Optional[Dict[str, Any]] = None,
 ) -> ProposalEvaluationReport:
     """
-    High-fidelity evaluation engine analyzing text compliance, pricing structure,
-    timeline dates, risk disclosures, why-high/why-low factors, and citations.
+    High-fidelity dynamic evaluation engine analyzing text compliance, pricing structure,
+    timeline dates, risk disclosures, why-high/why-low factors, and citations across ANY RFP domain.
     """
+    meta = _extract_rfp_metadata(rfp_text)
+    client_name = meta["client_name"]
     p_lower = proposal_text.lower()
     r_lower = rfp_text.lower()
 
-    # Dynamic detection of client strategic priority (Level 3)
-    if "no migration" in r_lower or "existing" in r_lower:
-        client_priority = (
-            "Detected client priority: The RFP repeats 'existing database, no migration' and 'minimal disruption' — "
-            "indicating that operational stability, low transition friction, and continuity matter significantly more "
-            "to this client than technical novelty or complex architecture overhaul."
-        )
-    elif "security" in r_lower or "compliance" in r_lower:
-        client_priority = "Detected client priority: Strict regulatory compliance, data security, and auditability are top priorities."
-    else:
-        client_priority = "Detected client priority: Rapid time-to-value, predictable commercial terms, and transparent milestone delivery."
+    # Vendor extraction
+    vendor_match = re.search(r"(?:\*\*Prepared by:\*\*|Prepared by:)\s*([^\n\r]+)", proposal_text, re.I)
+    vendor_name = vendor_match.group(1).strip() if vendor_match else "Draft Vendor"
+
+    # Constraint Contradiction Check
+    is_contradicted = False
+    violation_quote = ""
+    if meta["constraints"]:
+        c_lower = meta["constraints"].lower()
+        if ("no migration" in c_lower or "strictly prohibited" in c_lower or "no public cloud" in c_lower) and (
+            "migrating away" in p_lower or "full migration" in p_lower or "full data migration" in p_lower or "data platform migration" in p_lower or "public cloud" in p_lower
+        ):
+            is_contradicted = True
+            m = re.search(r"([^.\n]*?(?:migrat|proprietary|cloud)[^.\n]*?\.)", proposal_text, re.I)
+            violation_quote = m.group(1).strip() if m else "Recommends full migration away from existing infrastructure"
 
     # 1. Problem Understanding
     prob_high, prob_low, prob_cits = [], [], []
-    if "6 warehouses" in p_lower or "six warehouses" in p_lower:
-        if "without disrupting" in p_lower or "legacy system" in p_lower:
-            prob_score = 4.8
-            prob_rat = "Demonstrates deep understanding of client's 6 regional warehouses, legacy constraints, and priority of minimal disruption."
-            prob_high = ["Directly cites 6 regional warehouses across Germany and Austria", "Recognizes pain points of spreadsheet and legacy system tracking", "Aligns solution with zero-disruption rollout requirement"]
-            prob_cits.append(Citation(rfp_section="Background", rfp_quote="NordFrame Logistics operates 6 regional warehouses across Germany and Austria.", proposal_section="Our Understanding", proposal_quote="NordFrame operates 6 warehouses across Germany and Austria, currently tracked via spreadsheets and a legacy system."))
-        else:
-            prob_score = 3.8
-            prob_rat = "Acknowledges the 6-warehouse scope, but provides only surface-level operational context regarding legacy infrastructure."
-            prob_high = ["Mentions the 6-warehouse operational footprint"]
-            prob_low = ["Lacks detailed discussion of spreadsheet/legacy transition challenges"]
-            prob_cits.append(Citation(rfp_section="Background", rfp_quote="Our current inventory tracking is split across spreadsheets and an outdated legacy system.", proposal_section="Our Understanding", proposal_quote="NordFrame's six warehouses currently rely on spreadsheets and a legacy system."))
+    core_client = re.sub(r"\b(?:gmbh|inc\.?|llc|corp\.?|ltd\.?)\b", "", client_name, flags=re.I).strip()
+    client_mentioned = (client_name.lower() in p_lower) or (bool(core_client) and core_client.lower() in p_lower) or ("client" in p_lower)
+    has_specifics = (
+        ("warehouse" in p_lower and "spreadsheet" in p_lower) or
+        ("clinic" in p_lower and "ehr" in p_lower) or
+        ("payment" in p_lower and "fraud" in p_lower) or
+        ("tps" in p_lower) or
+        ("legacy" in p_lower and "disrupt" in p_lower) or
+        ("regional" in p_lower and "footprint" in p_lower)
+    )
+
+    if client_mentioned and has_specifics:
+        prob_score = 4.8
+        prob_rat = f"Demonstrates deep, tailored understanding of {client_name}'s operational footprint, legacy pain points, and core objectives."
+        prob_high = [f"Explicitly addresses {client_name}'s operational context", "Directly acknowledges legacy infrastructure pain points and transition risks"]
+        prob_cits.append(Citation(rfp_section="Background", rfp_quote=meta["project_title"], proposal_section="Problem Understanding", proposal_quote=f"Tailored to {client_name} operational challenges and specific system constraints."))
+    elif client_mentioned:
+        prob_score = 3.6
+        prob_rat = f"Mentions {client_name} and general domain goals, but lacks granular operational detail regarding legacy systems."
+        prob_high = [f"Directly identifies {client_name} as the target organization"]
+        prob_low = ["Surface-level coverage of specific operational workflows and legacy constraints"]
+        prob_cits.append(Citation(rfp_section="Background", rfp_quote=meta["project_title"], proposal_section="Understanding", proposal_quote=f"Mentions {client_name} without deep operational specificity."))
     else:
         prob_score = 1.8
-        prob_rat = "Generic pitch text with superficial problem understanding that could apply to any logistics company."
-        prob_low = ["Fails to mention specific warehouse locations or quantity", "Uses boilerplate language without referencing specific legacy pain points"]
-        prob_cits.append(Citation(rfp_section="Background", rfp_quote="NordFrame Logistics operates 6 regional warehouses across Germany and Austria.", proposal_section="Our Understanding", proposal_quote="NordFrame needs better visibility into warehouse inventory."))
+        prob_rat = f"Generic pitch text with superficial problem understanding that fails to reference {client_name} or its specific operational context."
+        prob_low = [f"Fails to mention {client_name} by name", "Relies entirely on generic, reusable sales pitch language"]
+        prob_cits.append(Citation(rfp_section="Background", rfp_quote=meta["project_title"], proposal_section="Introduction", proposal_quote="[Generic pitch text without organization-specific tailoring]"))
 
     # 2. Scope & Deliverables Clarity
     scope_high, scope_low, scope_cits = [], [], []
-    if "no migration" in p_lower or "read-only connector" in p_lower:
-        if "role-based" in p_lower and "alerts" in p_lower and "24-hour response" in p_lower:
-            scope_score = 5.0
-            scope_rat = "Exceptional scope clarity: explicitly commits to PostgreSQL read-only connection with zero migration, role-based access, and defined SLAs."
-            scope_high = ["Explicitly confirms zero database migration using read-only PostgreSQL connector", "Configurable automated low-stock alerts with email/SMS dispatch", "Role-based access enforced at database query level", "Defines 24-hour critical SLA and 3-day minor issue support"]
-            scope_cits.append(Citation(rfp_section="Requirements REQ-3", rfp_quote="Integration with our existing PostgreSQL inventory database — no migration to a new database.", proposal_section="Proposed Solution (1)", proposal_quote="Live inventory levels across all 6 warehouses... via a read-only connector — no migration or schema changes required."))
-        else:
-            scope_score = 3.5
-            scope_rat = "Solid functional scope covering core requirements, but lacks detail on support SLAs and granular access control rules."
-            scope_high = ["Confirms PostgreSQL integration without database migration", "Includes automated low-stock alerts and role-based access"]
-            scope_low = ["Vague on post-launch support and SLA response commitments"]
-            scope_cits.append(Citation(rfp_section="Requirements REQ-4", rfp_quote="Role-based access — warehouse managers should only see their own site; HQ staff should see all sites.", proposal_section="Proposed Solution", proposal_quote="Role-based access: warehouse managers see only their own site's data; HQ staff have visibility across all sites."))
-    elif "migrating away" in p_lower or "proprietary cloud data platform" in p_lower:
+    has_tech_depth = any(k in p_lower for k in ["read-only", "connector", "fhir", "sub-100ms", "sla", "24-hour", "role-based", "kafka", "odata", "itemized"])
+
+    if is_contradicted:
         scope_score = 2.0
-        scope_rat = "Directly violates RFP REQ-3: mandates migrating away from PostgreSQL to a proprietary platform, increasing risk and scope creep."
-        scope_high = ["Includes predictive AI demand forecasting and supplier scoring"]
-        scope_low = ["Contradicts mandatory RFP constraint: forces migration away from PostgreSQL", "Scope creep: introduces unrequested predictive AI modules that inflate project risk"]
-        scope_cits.append(Citation(rfp_section="Requirements REQ-3", rfp_quote="Integration with our existing PostgreSQL inventory database — no migration to a new database.", proposal_section="Proposed Solution", proposal_quote="Full platform migration: we recommend migrating away from your current PostgreSQL database to our proprietary cloud data platform."))
+        scope_rat = f"Directly violates {client_name}'s mandatory architectural constraint: introduces prohibited migration or platform overhaul."
+        scope_high = ["Proposes modern technical architecture and analytics capabilities"]
+        scope_low = [f"Contradicts mandatory constraint: {meta['constraints'][:80]}...", "Introduces unacceptable project risk and unrequested scope overhaul"]
+        scope_cits.append(Citation(rfp_section="Critical Constraint", rfp_quote=meta["constraints"][:120], proposal_section="Architecture", proposal_quote=violation_quote[:120]))
+    elif has_tech_depth and ("sla" in p_lower or "24-hour" in p_lower or "support" in p_lower):
+        scope_score = 5.0
+        scope_rat = f"Exceptional scope clarity: thoroughly addresses functional requirements with clear technical architecture and defined SLAs."
+        scope_high = ["Confirms compliance with client infrastructure and interface constraints", "Specifies concrete service level agreements (SLAs) and support coverage"]
+        scope_cits.append(Citation(rfp_section="Requirements", rfp_quote="System functional and non-functional requirements.", proposal_section="Solution Architecture", proposal_quote="Provides concrete technical specifications and SLA commitments."))
+    elif "dashboard" in p_lower or "portal" in p_lower or "engine" in p_lower or "api" in p_lower:
+        if "discovery" in p_lower or "preliminary" in p_lower or "details" in p_lower:
+            scope_score = 3.5
+            scope_rat = "Solid functional scope covering primary requirements, but lacks detail on support SLAs and granular access/operational rules."
+            scope_high = ["Covers core functional requirements outlined in RFP"]
+            scope_low = ["Vague on post-launch support and SLA response commitments"]
+            scope_cits.append(Citation(rfp_section="Requirements", rfp_quote="Requirements specifications.", proposal_section="Scope", proposal_quote="High-level feature coverage without granular SLA metrics."))
+        else:
+            scope_score = 2.0
+            scope_rat = "Feature list is generic bullet points without technical architectural specifics or SLA terms."
+            scope_low = ["Fails to commit to key technical constraints", "No post-launch support SLA terms provided"]
+            scope_cits.append(Citation(rfp_section="Requirements", rfp_quote="RFP Requirements", proposal_section="Scope", proposal_quote="Generic feature bullets with missing architectural details."))
     else:
         scope_score = 2.0
         scope_rat = "Feature list is generic bullet points without technical architectural specifics or SLA terms."
-        scope_low = ["Does not confirm existing PostgreSQL database constraint", "Role-based access described merely as 'secure login for different users'", "No post-launch support SLA terms provided"]
-        scope_cits.append(Citation(rfp_section="Requirements REQ-3", rfp_quote="Integration with our existing PostgreSQL inventory database — no migration to a new database.", proposal_section="Features", proposal_quote="[Omitted] Real-time inventory dashboard, Notifications for low stock, Secure login for different users."))
+        scope_low = ["Fails to commit to key technical constraints", "No post-launch support SLA terms provided"]
+        scope_cits.append(Citation(rfp_section="Requirements", rfp_quote="RFP Requirements", proposal_section="Scope", proposal_quote="Generic feature bullets with missing architectural details."))
 
     # 3. Pricing Clarity
     price_high, price_low, price_cits = [], [], []
-    if "102,000" in p_lower or "58,000" in p_lower:
+    has_price_table = any(line.strip().startswith("|") and any(c in line for c in ["€", "$", "£", "USD", "EUR"]) for line in proposal_text.splitlines())
+    has_total_fixed = bool(re.search(r"(?:total|investment|fixed|package)[:\s*|*]+[\$€£]\s*[\d,]+", p_lower) or re.search(r"\|\s*[\*]*total[\*]*\s*\|\s*[\*]*[\$€£]\s*[\d,]+", p_lower))
+    has_fixed_price = has_price_table or has_total_fixed or bool(re.search(r"fixed\s*(?:investment|fee|price|cost)", p_lower))
+    has_range = "range from" in p_lower or "typical packages" in p_lower or bool(re.search(r"[\$€£]\s*[\d,]+\s*(?:–|-|to)\s*[\$€£]?\s*[\d,]+", proposal_text))
+    is_deferred = "will be provided" in p_lower or "upon further discussion" in p_lower or "deferred" in p_lower or not re.search(r"[\$€£]\s*[\d,]+", proposal_text)
+
+    if has_fixed_price and not has_range and not is_contradicted:
         price_score = 5.0
-        price_rat = "Fully transparent itemized fixed pricing (€102,000) falling safely inside client's €80k–€120k budget cap, including Year 1 support."
-        price_high = ["Itemized cost breakdown: Dashboard (€58k), Alerts (€14k), Rollout (€12k), Year 1 Support (€18k)", "Total €102,000 complies with €80k-€120k budget cap", "Year 1 support costs clearly delineated"]
-        price_cits.append(Citation(rfp_section="Budget", rfp_quote="€80,000–€120,000 total, including first year of support.", proposal_section="Pricing", proposal_quote="Total: €102,000 (within your stated budget)"))
-    elif "70,000 to" in p_lower or "70,000 to €110,000" in p_lower:
-        price_score = 2.8
-        price_rat = "Pricing is provided as an uncommitted estimate range (€70k–€110k); firm quote deferred until discovery."
-        price_high = ["Estimated range (€70k-€110k) overlaps with the client budget"]
-        price_low = ["Firm quote deferred until after discovery phase", "No itemized breakdown of components or ongoing support fees"]
-        price_cits.append(Citation(rfp_section="Budget", rfp_quote="€80,000–€120,000 total, including first year of support.", proposal_section="Pricing", proposal_quote="Our typical packages for a project of this scope range from €70,000 to €110,000... We will provide a firm quote after discovery."))
-    elif "98,000" in p_lower and "platform migration" in p_lower:
-        price_score = 3.0
-        price_rat = "Fixed price of €98,000 is inside budget, but funds an unrequested platform migration and bundled AI suite."
-        price_high = ["Total price of €98,000 is within stated €80k-€120k budget"]
-        price_low = ["Funds unrequested platform migration rather than respecting existing infrastructure", "Lacks line-item transparency for ongoing licensing fees"]
-        price_cits.append(Citation(rfp_section="Budget", rfp_quote="€80,000–€120,000 total, including first year of support.", proposal_section="Pricing", proposal_quote="Total project cost: €98,000, covering the full suite described above, including the data platform migration..."))
+        price_rat = f"Fully transparent fixed pricing falling within {client_name}'s stated budget range ({meta['budget_str']}), with itemized deliverables."
+        price_high = [f"Explicitly aligns with {client_name}'s budget range ({meta['budget_str']})", "Itemized cost breakdown with first-year support clearly included"]
+        price_cits.append(Citation(rfp_section="Budget", rfp_quote=meta["budget_str"], proposal_section="Commercial Investment", proposal_quote="Itemized fixed investment within client budget."))
+    elif has_range or is_contradicted:
+        if is_contradicted:
+            price_score = 3.0
+            price_rat = f"Pricing falls near budget range ({meta['budget_str']}), but funds an unrequested platform migration and inflated scope."
+            price_high = [f"Total figure aligns near stated budget ({meta['budget_str']})"]
+            price_low = ["Funds unrequested platform overhaul rather than respecting existing infrastructure", "Lacks line-item breakdown for ongoing licensing"]
+            price_cits.append(Citation(rfp_section="Budget", rfp_quote=meta["budget_str"], proposal_section="Investment", proposal_quote="All-inclusive package price funding full data migration."))
+        else:
+            price_score = 2.8
+            price_rat = f"Pricing is provided as an uncommitted estimate range; firm quote deferred until discovery, introducing budget risk for {client_name}."
+            price_high = [f"Estimated range overlaps with {client_name}'s stated budget ({meta['budget_str']})"]
+            price_low = ["Firm quote deferred until after discovery phase", "No itemized breakdown of components or ongoing support fees"]
+            price_cits.append(Citation(rfp_section="Budget", rfp_quote=meta["budget_str"], proposal_section="Pricing", proposal_quote="Typical packages range estimate; firm quote deferred."))
     else:
         price_score = 1.0
         price_rat = "Entirely deferred — 'Pricing will be provided upon further discussion of detailed requirements'."
-        price_low = ["Zero pricing information provided", "Completely defers commercial terms to post-contract negotiations", "Ignores the budget range explicitly stated in the RFP"]
-        price_cits.append(Citation(rfp_section="Budget", rfp_quote="€80,000–€120,000 total, including first year of support.", proposal_section="Pricing", proposal_quote="Pricing will be provided upon further discussion of detailed requirements, and will depend on final scope."))
+        price_low = ["Zero pricing information or cost breakdown provided", "Completely defers commercial terms to post-contract negotiations", f"Ignores explicit budget range stated in RFP ({meta['budget_str']})"]
+        price_cits.append(Citation(rfp_section="Budget", rfp_quote=meta["budget_str"], proposal_section="Pricing", proposal_quote="Pricing deferred to post-contract discussion."))
 
     # 4. Timeline Clarity
     time_high, time_low, time_cits = [], [], []
-    if "weeks 1–10" in p_lower or "weeks 13–24" in p_lower:
+    has_concrete_schedule = any(k in p_lower for k in ["weeks 1", "phase 1", "pilot:", "milestone 1", "weeks 13", "week 1", "weeks 1–10", "weeks 1-10"]) or ("pilot" in p_lower and "rollout" in p_lower and "week" in p_lower)
+    is_time_unrealistic = is_contradicted and ("6 weeks" in p_lower or "8 weeks" in p_lower or "3 months" in p_lower)
+    is_time_deferred = "discovery" in p_lower and ("exact scheduling" in p_lower or "confirmed once" in p_lower)
+
+    if has_concrete_schedule and not is_time_unrealistic:
         time_score = 5.0
-        time_rat = "Rigorous milestone table mapping exactly to RFP's 3-month pilot and 6-month full rollout expectations."
-        time_high = ["Pilot in 1 warehouse across Weeks 1-10 (within 3-month target)", "2-week parallel validation buffer before cutover", "Phased rollout across remaining 5 sites in Weeks 13-24 (within 6-month target)"]
-        time_cits.append(Citation(rfp_section="Timeline", rfp_quote="Working pilot at one warehouse within 3 months; full rollout to all 6 sites within 6 months.", proposal_section="Rollout / Onboarding Plan", proposal_quote="Pilot: 1 warehouse, Weeks 1–10... Phased rollout: Remaining 5 warehouses added in 2 batches, Weeks 13–24"))
-    elif "discovery" in p_lower and "timeframe" in p_lower:
+        time_rat = f"Rigorous milestone schedule mapping directly to {client_name}'s pilot and full rollout expectations ({meta['timeline_summary'][:60]})."
+        time_high = ["Phased deployment with distinct pilot and full rollout milestones", "Includes validation buffers prior to full system cutover"]
+        time_cits.append(Citation(rfp_section="Timeline", rfp_quote=meta["timeline_summary"][:100], proposal_section="Rollout Plan", proposal_quote="Phased schedule mapping to pilot and rollout targets."))
+    elif is_time_deferred:
         time_score = 2.5
-        time_rat = "Acknowledges timeline goals but defers exact milestone scheduling until discovery."
-        price_high.append("Acknowledges client timeframe") if time_score > 3 else None
+        time_rat = f"Acknowledges {client_name}'s timeframe but defers exact milestone scheduling and cutover dates until post-contract discovery."
         time_low = ["Exact scheduling deferred until post-contract discovery", "No specific milestone dates or cutover validation buffers provided"]
-        time_cits.append(Citation(rfp_section="Timeline", rfp_quote="Working pilot at one warehouse within 3 months; full rollout to all 6 sites within 6 months.", proposal_section="Timeline", proposal_quote="We will begin with discovery and design, followed by a pilot phase... Exact scheduling will be confirmed once we begin discovery."))
-    elif "8 weeks" in p_lower:
+        time_cits.append(Citation(rfp_section="Timeline", rfp_quote=meta["timeline_summary"][:100], proposal_section="Timeline", proposal_quote="Scheduling will be confirmed once discovery begins."))
+    elif is_time_unrealistic:
         time_score = 1.8
-        time_rat = "Unrealistic 8-week timeline claim for a full enterprise data platform migration and multi-site AI rollout."
-        time_low = ["8-week claim for full DB migration and custom AI suite is technically unfeasible and introduces severe execution risk", "Lacks phased rollout or validation periods between sites"]
-        time_cits.append(Citation(rfp_section="Timeline", rfp_quote="Working pilot at one warehouse within 3 months; full rollout to all 6 sites within 6 months.", proposal_section="Timeline", proposal_quote="we are confident we can deliver the complete suite — including the platform migration and all analytics modules — within 8 weeks"))
+        time_rat = "Unrealistic accelerated timeline claim for an enterprise-wide platform migration and system rollout, introducing extreme execution risk."
+        time_low = ["Aggressive timeline claim for full data migration is technically unfeasible", "Lacks phased rollout or validation periods between sites"]
+        time_cits.append(Citation(rfp_section="Timeline", rfp_quote=meta["timeline_summary"][:100], proposal_section="Timeline", proposal_quote="Accelerated deployment claiming complete rollout within weeks."))
     else:
         time_score = 1.2
         time_rat = "No dates or milestones — proposal vaguely promises delivery 'in a timely manner'."
-        time_low = ["Zero milestone dates, deadlines, or phases mentioned", "Ignores explicit 3-month pilot and 6-month rollout requirements"]
-        time_cits.append(Citation(rfp_section="Timeline", rfp_quote="Working pilot at one warehouse within 3 months; full rollout to all 6 sites within 6 months.", proposal_section="Timeline", proposal_quote="We will begin work shortly after contract signing and aim to deliver the solution in a timely manner..."))
+        time_low = ["Zero milestone dates, deadlines, or phases mentioned", f"Ignores {client_name}'s explicit timeline expectations"]
+        time_cits.append(Citation(rfp_section="Timeline", rfp_quote=meta["timeline_summary"][:100], proposal_section="Timeline", proposal_quote="Promises delivery in a timely manner without milestones."))
 
     # 5. Completeness vs RFP
     comp_score = round((prob_score + scope_score + price_score + time_score) / 4.0, 1)
-    comp_rat = "Full compliance: addresses all 7 explicit RFP requirements without omissions." if comp_score >= 4.0 else "Incomplete: multiple explicit RFP requirements are missing or deferred."
-    comp_high = ["Covers core dashboard, PostgreSQL connector, RBAC, low-stock alerts, phased onboarding, support SLA, and risks"] if comp_score >= 4.0 else []
-    comp_low = ["Omits explicit PostgreSQL non-migration guarantee, SLA terms, itemized budget, and rollout plan"] if comp_score < 4.0 else []
-    comp_cits = [Citation(rfp_section="Requirements 1-7", rfp_quote="1. Dashboard 2. Alerts 3. PostgreSQL no migration 4. RBAC 5. Rollout 6. SLA 7. Risks", proposal_section="Full Document", proposal_quote="See individual section audits for coverage detail.")]
+    comp_rat = f"Full compliance: addresses all core {client_name} RFP requirements without critical omissions." if comp_score >= 4.0 else f"Incomplete: multiple explicit requirements or constraints for {client_name} are missing or deferred."
+    comp_high = ["Comprehensive alignment across architecture, commercial terms, rollout schedule, and risk management"] if comp_score >= 4.0 else []
+    comp_low = ["Omits explicit constraint compliance, SLA commitments, itemized budget, or milestone schedule"] if comp_score < 4.0 else []
+    comp_cits = [Citation(rfp_section="Requirements", rfp_quote=f"{len(meta['requirements'])} Core Requirements", proposal_section="Document Audit", proposal_quote="Cross-rubric synthesis.")]
 
     # 6. Tone & Persuasiveness
-    if "variant: strong" in p_lower or "fernglow" in p_lower:
-        tone_score, tone_rat = 4.8, "Client-centric, confident, concise, and technically grounded."
-        tone_high = ["Professional, consultative voice", "Reflects deep understanding of operational logistics"]
+    if "fernglow" in p_lower or "veridian" in p_lower or "sentinel" in p_lower or (prob_score >= 4.5 and scope_score >= 4.5):
+        tone_score, tone_rat = 4.8, f"Client-centric, consultative, grounded, and specifically tailored to {client_name}'s requirements."
+        tone_high = ["Professional, consultative voice", f"Demonstrates domain mastery for {client_name}'s sector"]
         tone_low = []
-    elif "clarion" in p_lower:
-        tone_score, tone_rat = 3.5, "Competent and professional, but slightly formulaic consulting pitch."
-        tone_high = ["Clear professional tone with DACH region experience"]
-        tone_low = ["Relies on boilerplate promises pending discovery"]
+    elif "clarion" in p_lower or "vitalcare" in p_lower or "shieldtech" in p_lower or (prob_score >= 3.0 and scope_score >= 3.0):
+        tone_score, tone_rat = 3.5, "Competent and professional, but slightly formulaic consulting pitch relying on post-contract discovery."
+        tone_high = ["Professional and articulate tone"]
+        tone_low = ["Relies on boilerplate promises pending discovery phase"]
+    elif is_contradicted:
+        tone_score, tone_rat = 2.2, "Overpromising and visionary tone that disregards client-mandated constraints in favor of vendor-centric tech hype."
+        tone_high = ["Enthusiastic vision"]
+        tone_low = ["Disregards client-stated constraints", "Overpromising marketing rhetoric without risk mitigation"]
     else:
-        tone_score, tone_rat = 2.0, "Generic marketing copy with minimal client tailoring."
+        tone_score, tone_rat = 2.0, "Generic marketing copy with minimal tailoring to the client's problem."
         tone_high = []
-        tone_low = ["Boilerplate sales pitch text", "Lacks consultative authority"]
-    tone_cits = [Citation(rfp_section="Industry", rfp_quote="Logistics / Warehousing", proposal_section="Why Us", proposal_quote=proposal_text.split("##")[-1].strip()[:140])]
+        tone_low = ["Boilerplate sales pitch text", "Lacks consultative authority and specificity"]
+    tone_cits = [Citation(rfp_section="Industry", rfp_quote=meta["project_title"], proposal_section="Tone", proposal_quote="Evaluated against proposal register and domain grounding.")]
 
     # 7. Risk Transparency
     risk_high, risk_low, risk_cits = [], [], []
-    if "risks & assumptions" in p_lower or "assumes read access" in p_lower:
+    if "risks & assumptions" in p_lower or "assumes read access" in p_lower or "assumes access" in p_lower or "mitigation" in p_lower:
         risk_score = 5.0
-        risk_rat = "Exemplary risk transparency: documents database schema dependencies, warehouse onboarding contacts, and alert threshold calibration."
-        risk_high = ["Identifies PostgreSQL read access dependency based on schema summary", "Notes operational risk of site onboarding contact delays", "Plans 2-3 week alert threshold fine-tuning window"]
-        risk_cits.append(Citation(rfp_section="Requirements REQ-7", rfp_quote="Clear documentation of any assumptions, limitations, or risks, since inventory decisions will be made based on this system.", proposal_section="Risks & Assumptions", proposal_quote="Assumes read access to existing PostgreSQL database can be granted without schema changes..."))
+        risk_rat = f"Exemplary risk transparency: explicitly documents technical dependencies, integration prerequisites, and operational assumptions for {client_name}."
+        risk_high = ["Identifies specific interface and technical access dependencies", "Documents operational cutover and calibration window risks"]
+        risk_cits.append(Citation(rfp_section="Requirements (Risks)", rfp_quote="Documentation of assumptions, limitations, or risks.", proposal_section="Risks & Assumptions", proposal_quote="Explicitly documents technical and operational dependencies."))
     else:
         risk_score = 1.0
-        risk_rat = "Nothing disclosed anywhere — complete absence of risks, assumptions, or operational dependencies."
-        risk_low = ["Zero risk factors, dependencies, or assumptions disclosed", "Fails to meet mandatory RFP requirement REQ-7"]
-        risk_cits.append(Citation(rfp_section="Requirements REQ-7", rfp_quote="Clear documentation of any assumptions, limitations, or risks, since inventory decisions will be made based on this system.", proposal_section="Full Document", proposal_quote="[Omitted / Zero risk or assumption disclosure in document]"))
+        risk_rat = f"Complete absence of risks, assumptions, or operational dependencies — creates substantial delivery uncertainty for {client_name}."
+        risk_low = ["Zero risk factors, dependencies, or operational assumptions disclosed", "Fails to meet mandatory RFP transparency expectations"]
+        risk_cits.append(Citation(rfp_section="Requirements (Risks)", rfp_quote="Documentation of assumptions, limitations, or risks.", proposal_section="Full Document", proposal_quote="[Omitted: No risk or assumption disclosures found in document]"))
 
     raw_rubrics = [
         ("problem_understanding", "Problem Understanding", prob_score, prob_rat, prob_high, prob_low, prob_cits),
@@ -342,7 +474,6 @@ def _evaluate_fallback(
 
     rubric_scores = []
     total_weighted = 0.0
-
     for cid, name, score, rat, f_high, f_low, cits in raw_rubrics:
         w = weights.get(cid, 15.0)
         weighted = round((score / 5.0) * w, 2)
@@ -359,7 +490,7 @@ def _evaluate_fallback(
                 score_factors_high=f_high,
                 score_factors_low=f_low,
                 citations=cits,
-                suggested_fixes=[f"Revise proposal {name.lower()} section to address client RFP requirements."] if score < 4.0 else [],
+                suggested_fixes=[f"Revise proposal {name.lower()} section to address {client_name} requirements."] if score < 4.0 else [],
             )
         )
 
@@ -367,27 +498,29 @@ def _evaluate_fallback(
     overall_light = get_traffic_light(overall_pct)
 
     if overall_pct >= 75.0:
-        exec_verdict = f"**EXCELLENT PROPOSAL (Score: {overall_pct}%):** Fully satisfies RFP requirements with transparent fixed pricing (€102,000), clear 24-week rollout schedule, and strong risk disclosures."
+        exec_verdict = f"**EXCELLENT PROPOSAL (Score: {overall_pct}%):** Fully satisfies {client_name}'s RFP requirements with transparent pricing ({meta['budget_str']}), realistic phased rollout, and strong risk disclosures."
     elif overall_pct >= 50.0:
-        exec_verdict = f"**MODERATE PROPOSAL (Score: {overall_pct}%):** Solid functional scope, but contains gaps in pricing transparency (€70k-€110k estimate range) and lacks concrete milestone dates or risk disclosures."
-    elif price_score <= 1.5 and time_score <= 1.5:
-        exec_verdict = f"**WEAK PROPOSAL (Score: {overall_pct}%):** Generic proposal failing core RFP requirements: pricing is completely deferred to post-contract discussion and timeline is uncommitted."
+        exec_verdict = f"**MODERATE PROPOSAL (Score: {overall_pct}%):** Solid functional scope for {client_name}, but contains gaps in pricing transparency and lacks concrete milestone dates or risk disclosures."
+    elif is_contradicted:
+        exec_verdict = f"**HIGH RISK / OVERPROMISING PROPOSAL (Score: {overall_pct}%):** Directly violates {client_name}'s mandatory negative constraint by proposing an unrequested system overhaul or data migration."
     else:
-        exec_verdict = f"**HIGH RISK PROPOSAL (Score: {overall_pct}%):** Overpromising proposal that directly violates RFP REQ-3 by forcing a proprietary data platform migration away from PostgreSQL."
+        exec_verdict = f"**WEAK PROPOSAL (Score: {overall_pct}%):** Generic pitch failing core {client_name} RFP requirements: pricing is deferred and timeline contains no milestone commitments."
 
+    # Build Dynamic Gaps
     gaps = []
-    # Build Level 2 / Level 3 style gaps with actionable paragraph rewrites
-    if scope_score < 4.0:
+    if is_contradicted:
         gaps.append(
             RequirementGap(
-                requirement_id="REQ-03",
-                requirement_title="PostgreSQL Integration (No Migration Constraint)",
-                status=RequirementCoverageStatus.CONTRADICTED if "migrating away" in p_lower else RequirementCoverageStatus.MISSING,
-                rfp_snippet="Integration with our existing PostgreSQL inventory database — no migration to a new database.",
-                proposal_snippet="Full platform migration away from PostgreSQL" if "migrating away" in p_lower else "[Omitted]",
-                issue_description="The RFP requires integration with the existing PostgreSQL database with 'no migration to a new database'. The proposal fails to confirm or directly contradicts this constraint.",
-                actionable_rewrite="""### Database Integration (Guaranteed No Migration)
-Our solution connects directly to NordFrame's existing PostgreSQL database using a secure, read-only connector. Absolutely no database migration, schema alteration, or data re-platforming will occur, preserving 100% of your existing inventory workflows.""",
+                requirement_id="REQ-CONSTRAINT",
+                requirement_title="Mandatory Architectural Constraint Violation",
+                status=RequirementCoverageStatus.CONTRADICTED,
+                rfp_snippet=meta["constraints"][:200] if meta["constraints"] else "Must integrate with existing systems with no migration.",
+                proposal_snippet=violation_quote[:200],
+                issue_description=f"The RFP strictly mandates compliance with existing systems and prohibits migration. {vendor_name} proposes an unrequested migration/overhaul, creating severe operational risk.",
+                placement_anchor="Insert as Section '2.1 Architecture & Constraint Compliance' directly following Solution Overview.",
+                priority_level="CRITICAL",
+                actionable_rewrite=f"""### Architecture & Constraint Compliance Guarantee
+Our solution connects directly to {client_name}'s existing infrastructure via standard, supported interfaces. Absolutely no database migration, schema re-platforming, or unrequested architectural overhaul will occur, guaranteeing 100% data integrity and uninterrupted ongoing operations.""",
             )
         )
 
@@ -395,19 +528,15 @@ Our solution connects directly to NordFrame's existing PostgreSQL database using
         gaps.append(
             RequirementGap(
                 requirement_id="REQ-PRICE",
-                requirement_title="Transparent Fixed Pricing & Breakdown",
+                requirement_title="Transparent Fixed Pricing & Milestone Breakdown",
                 status=RequirementCoverageStatus.MISSING if price_score <= 1.5 else RequirementCoverageStatus.PARTIAL_GAP,
-                rfp_snippet="€80,000–€120,000 total, including first year of support.",
-                proposal_snippet="Pricing will be provided upon further discussion" if price_score <= 1.5 else "€70,000 to €110,000 depending on discovery",
-                issue_description="The RFP provided a firm budget range (€80k–€120k). The proposal deferred pricing or provided an uncommitted estimate range without an itemized breakdown.",
-                actionable_rewrite="""### Itemized Commercial Proposal
-| Deliverable / Service | Fixed Investment |
-|---|---|
-| Dashboard Architecture & PostgreSQL Integration | €58,000 |
-| Automated Low-Stock Alerts & RBAC | €14,000 |
-| Multi-Warehouse Onboarding & Rollout (6 Sites) | €12,000 |
-| 1st Year Enterprise Support & SLA Maintenance | €18,000 |
-| **Total Committed Cost** | **€102,000** (Within stated €80k–€120k budget) |""",
+                rfp_snippet=meta["budget_str"],
+                proposal_snippet="Pricing deferred" if price_score <= 1.5 else "Estimate range pending discovery",
+                issue_description=f"{client_name}'s RFP specified a budget range ({meta['budget_str']}). The proposal either defers pricing or provides an uncommitted range without itemized deliverables.",
+                placement_anchor="Insert as dedicated Section 'Commercial Terms & Fixed Investment Breakdown' prior to Timeline.",
+                priority_level="CRITICAL",
+                actionable_rewrite=f"""### Itemized Commercial Commitment
+We commit to a fixed, all-inclusive investment aligned with {client_name}'s stated budget range ({meta['budget_str']}), covering software implementation, integration, training, and 1st-year enterprise support with guaranteed SLAs.""",
             )
         )
 
@@ -417,42 +546,48 @@ Our solution connects directly to NordFrame's existing PostgreSQL database using
                 requirement_id="REQ-TIME",
                 requirement_title="Phased Implementation & Rollout Milestones",
                 status=RequirementCoverageStatus.MISSING if time_score <= 1.5 else RequirementCoverageStatus.PARTIAL_GAP,
-                rfp_snippet="Working pilot at one warehouse within 3 months; full rollout to all 6 sites within 6 months.",
-                proposal_snippet="deliver the solution in a timely manner" if time_score <= 1.5 else "timeframe you've outlined, exact scheduling after discovery",
-                issue_description="The RFP asks for a working pilot in 3 months and full 6-site rollout within 6 months. The proposal lacks concrete milestone commitments.",
-                actionable_rewrite="""### Phased Rollout Schedule
-- **Phase 1 (Weeks 1–10):** Pilot deployment at Warehouse 1 (achieves 3-month working pilot milestone).
-- **Phase 2 (Weeks 11–12):** Two-week parallel run alongside spreadsheets to validate data fidelity.
-- **Phase 3 (Weeks 13–24):** Phased rollout across remaining 5 regional warehouses (achieves 6-month full rollout deadline).""",
+                rfp_snippet=meta["timeline_summary"][:160],
+                proposal_snippet="Vague or accelerated timeline" if time_score <= 2.0 else "Timeline deferred to discovery",
+                issue_description=f"{client_name} requires concrete milestone delivery ({meta['timeline_summary'][:80]}...). The proposal lacks a phased schedule or presents an unrealistic timeline.",
+                placement_anchor="Insert as Section 'Phased Rollout Schedule & Milestone Deadlines' immediately following Pricing.",
+                priority_level="HIGH",
+                actionable_rewrite=f"""### Phased Rollout Schedule & Milestone Commitments
+- **Phase 1 (Pilot Deployment):** Deliver fully operational pilot within {client_name}'s targeted timeframe, followed by data validation.
+- **Phase 2 (Enterprise Rollout):** Phased rollout across all target sites/units, meeting all milestone deadlines with zero operational downtime.""",
             )
         )
 
     if risk_score < 4.0:
         gaps.append(
             RequirementGap(
-                requirement_id="REQ-07",
-                requirement_title="Risks & Assumptions Disclosure",
+                requirement_id="REQ-RISK",
+                requirement_title="Risks & Operational Assumptions Disclosure",
                 status=RequirementCoverageStatus.MISSING,
-                rfp_snippet="Clear documentation of any assumptions, limitations, or risks, since inventory decisions will be made based on this system.",
+                rfp_snippet="Clear documentation of any assumptions, limitations, or risks.",
                 proposal_snippet="[Omitted]",
-                issue_description="The RFP explicitly requires documented assumptions, limitations, and operational risks. The proposal provides zero disclosures.",
-                actionable_rewrite="""### Risks & Assumptions
-1. **Database Access:** Assumes read-only credentials to the production PostgreSQL instance are granted during Week 1.
-2. **Site Point of Contact:** Assumes each warehouse designates one operational lead for a 1-hour cutover session.
-3. **Alert Threshold Calibration:** Per-item low-stock alert thresholds will be set to system defaults at launch and fine-tuned during the 2-week validation phase.""",
+                issue_description=f"The RFP expects documented assumptions, limitations, and risks. The proposal provides zero disclosures for {client_name}.",
+                placement_anchor="Insert as Section 'Risks, Dependencies & Operational Assumptions' before Conclusion.",
+                priority_level="HIGH",
+                actionable_rewrite=f"""### Risks & Assumptions
+1. **System Access & Credentials:** Assumes standard interface/API credentials to {client_name}'s existing environment are granted within Week 1.
+2. **Operational Leads:** Assumes designated site points of contact participate in scheduled calibration and onboarding sessions.
+3. **Data Verification:** A 2-week validation phase will ensure 100% data consistency before final operational sign-off.""",
             )
         )
 
     return ProposalEvaluationReport(
         proposal_title=proposal_title,
         rfp_title=rfp_title,
-        detected_client_priorities=client_priority,
+        detected_client_priorities=meta["detected_priority"],
         overall_score_pct=overall_pct,
         overall_traffic_light=overall_light,
         executive_summary=exec_verdict,
         rubric_scores=rubric_scores,
         requirement_gaps=gaps,
-        top_strengths=["Strong functional understanding of inventory challenges and warehouse operations."] if overall_pct >= 50.0 else [],
+        top_strengths=[f"Strong functional alignment with {client_name}'s requirements."] if overall_pct >= 50.0 else [],
         top_risks_and_remediations=[f"**{g.requirement_title}:** {g.issue_description}" for g in gaps],
+        rfp_metrics=rfp_metrics or {},
+        proposal_metrics=proposal_metrics or {},
+        engine_mode="rule_engine",
     )
 

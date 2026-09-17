@@ -29,7 +29,10 @@ CRITICAL SCORING RULES:
   * In `score_factors_high`: List concrete strengths that justify giving a high score (e.g. "Itemized pricing table totaling €102k within stated budget cap", "Pilot in W1-10 adheres to 3-month target").
   * In `score_factors_low`: List specific gaps, omissions, or vagueness that dragged the score down (e.g. "Pricing entirely deferred to post-contract discussion", "Direct violation of REQ-03 by demanding cloud DB migration", "Zero SLA response times specified").
 - For each criterion, cite exact quotes from both the RFP and the Proposal in `citations`. If the proposal omitted the topic, explicitly note: Proposal quote = "[Omitted / No mention in document]".
-- In `requirement_gaps`, audit every atomic RFP requirement. For any requirement marked PARTIAL_GAP, MISSING, or CONTRADICTED, provide a fully fleshed out, copy-pasteable paragraph rewrite ready to insert directly into the proposal draft.
+- In `requirement_gaps`, audit every atomic RFP requirement. For any requirement marked PARTIAL_GAP, MISSING, or CONTRADICTED:
+  * `priority_level`: Assign 'CRITICAL' (for constraint violations or disqualifying omissions like pricing), 'HIGH' (for major scope omissions), or 'MEDIUM' (for minor omissions/clarity).
+  * `placement_anchor`: State precisely WHERE in the proposal this fix must be added (e.g. "Insert under Section 3 'Proposed Solution' after bullet 2", "Add as new subsection '4.1 SLA Support Matrix'", "Replace Section 2 paragraph 1").
+  * `actionable_rewrite`: Provide a fully fleshed out, copy-pasteable paragraph or table rewrite ready to insert directly into the proposal draft.
 - In `detected_client_priorities`, capture the client's underlying strategic mindset (Level 3 insight).
 """
 

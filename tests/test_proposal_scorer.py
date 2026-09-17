@@ -114,6 +114,11 @@ def test_why_high_why_low_factors_and_citations():
     assert len(weak_pricing.score_factors_low) > 0, "Weak pricing must explain why score was penalized"
     assert len(weak_pricing.citations) > 0, "Must include citations pointing out omission/deferral"
 
+    # Verify actionable placement anchor & priority level on requirement gaps
+    first_gap = report_weak.requirement_gaps[0]
+    assert len(first_gap.placement_anchor) > 0, "Requirement gap must specify exact placement anchor in proposal"
+    assert first_gap.priority_level in ["CRITICAL", "HIGH", "MEDIUM"], "Must assign valid priority level"
+
 
 def test_arbitrary_domain_evaluation():
     custom_rfp = """
@@ -146,4 +151,48 @@ def test_arbitrary_domain_evaluation():
     assert len(report.rubric_scores) == 7
     assert len(report.requirement_gaps) > 0
     assert report.detected_client_priorities != ""
+    assert "NordFrame" not in str(report), "Custom RFP must not leak hardcoded NordFrame text"
+    assert "PostgreSQL" not in str(report), "Custom RFP must not leak hardcoded PostgreSQL text"
+
+
+def test_dynamic_rfp_healthcare_dataset():
+    with open("sample_data/healthcare_telehealth/rfp.md") as f:
+        rfp_text = f.read()
+    with open("sample_data/healthcare_telehealth/response_3_strong.md") as f:
+        strong_text = f.read()
+    with open("sample_data/healthcare_telehealth/response_4_overpromise.md") as f:
+        over_text = f.read()
+
+    rep_strong = evaluate_proposal(rfp_text, strong_text, force_fallback=True)
+    rep_over = evaluate_proposal(rfp_text, over_text, force_fallback=True)
+
+    # Assert no hardcoded NordFrame leakage
+    assert "NordFrame" not in str(rep_strong)
+    assert "NordFrame" not in str(rep_over)
+    assert "€102,000" not in str(rep_strong)
+
+    # Assert correct domain client
+    assert "MediCare Systems" in rep_strong.detected_client_priorities or "MediCare" in rep_strong.executive_summary
+
+    # Strong must score higher than Overpromising
+    assert rep_strong.overall_score_pct > rep_over.overall_score_pct
+    assert rep_strong.overall_traffic_light == TrafficLight.GREEN
+
+
+def test_error_handling_and_no_silent_fallback(monkeypatch):
+    # Test that missing key raises ValueError when fallback is disallowed
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    with pytest.raises(ValueError) as exc_info:
+        evaluate_proposal("rfp content", "proposal content", allow_fallback_on_error=False)
+    assert "Gemini API Key missing" in str(exc_info.value)
+
+    # Test that error is recorded on report when fallback is allowed
+    monkeypatch.setenv("GEMINI_API_KEY", "INVALID_MOCK_KEY")
+    rep = evaluate_proposal("rfp content", "proposal content", allow_fallback_on_error=True)
+    assert rep.engine_mode == "rule_engine"
+    assert rep.llm_error is not None
+
+
 

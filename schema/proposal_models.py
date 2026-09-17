@@ -5,7 +5,7 @@ citations, requirement gap analysis, and comprehensive evaluation reports.
 """
 
 from enum import Enum
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from pydantic import BaseModel, Field
 
 
@@ -92,6 +92,14 @@ class RequirementGap(BaseModel):
     rfp_snippet: str = Field("", description="What the RFP requested")
     proposal_snippet: str = Field("", description="What the proposal currently says (or empty if missing)")
     issue_description: str = Field(..., description="Explanation of missing or weak coverage")
+    placement_anchor: str = Field(
+        "",
+        description="Exact location in the proposal where this fix should be placed (e.g., 'Insert as Section 3.2 after System Architecture' or 'Add as a standalone Appendix: Risks')"
+    )
+    priority_level: str = Field(
+        "HIGH",
+        description="Remediation urgency: CRITICAL (causes RFP disqualification), HIGH (drastically lowers score), MEDIUM (improves polish)"
+    )
     actionable_rewrite: str = Field(..., description="Concrete, copy-pasteable paragraph rewrite or new section text")
 
 
@@ -109,3 +117,10 @@ class ProposalEvaluationReport(BaseModel):
     requirement_gaps: List[RequirementGap] = Field(default_factory=list, description="Detailed RFP gap analysis")
     top_strengths: List[str] = Field(default_factory=list, description="Highlighted strong points")
     top_risks_and_remediations: List[str] = Field(default_factory=list, description="Critical risks needing attention before submission")
+    rfp_metrics: Dict[str, Any] = Field(default_factory=dict, description="Format, page/slide count, and word metrics for RFP")
+    proposal_metrics: Dict[str, Any] = Field(default_factory=dict, description="Format, page/slide count, and word metrics for proposal")
+    engine_mode: str = Field("agno_llm", description="Evaluation engine used (agno_llm or rule_engine)")
+    engine_notice: str = Field("", description="Notice or warnings from engine execution")
+    llm_error: Optional[str] = Field(None, description="Error message if LLM agent evaluation failed")
+    llm_error_traceback: Optional[str] = Field(None, description="Full traceback of LLM failure")
+
