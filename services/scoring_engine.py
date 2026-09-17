@@ -17,6 +17,7 @@ from schema.proposal_models import (
     Citation,
     TrafficLight,
     RequirementCoverageStatus,
+    AmbiguousRequirement,
 )
 from agents.proposal_scorer import create_proposal_scorer_agent
 from agents.rfp_analyzer import create_rfp_analyzer_agent
@@ -151,6 +152,105 @@ def check_company_mismatch(rfp_text: str, proposal_text: str) -> Tuple[bool, str
     return False, rfp_client, prop_target
 
 
+def detect_ambiguous_requirements(rfp_text: str, proposal_text: str) -> List[AmbiguousRequirement]:
+    """
+    Audits the customer's RFP for ambiguous, unquantified, or underspecified requirements.
+    Evaluates how the proposal addresses each ambiguity:
+      - HANDLED_WITH_ASSUMPTIONS (establishes baseline sizing, metrics, or discovery gates)
+      - REPEATED_VAGUELY (blindly repeats vague customer buzzwords without concrete boundaries)
+      - UNADDRESSED (fails to mention or bound the ambiguous requirement, risking scope creep)
+    Generates tailored pre-bid RFI clarification questions and protective proposal scoping assumptions.
+    """
+    patterns = [
+        (
+            "REQ-AMB-01",
+            "Performance & Latency Criteria Underspecified",
+            r"(?:blazing\s+fast|high\s+performance|fast\s+response|maximum\s+speed|quick\s+turnaround|highly\s+performant|fast\s+loading|ultra-low\s+latency)",
+            "The customer RFP demands high speed/performance without providing target response latency (ms), concurrency figures, or throughput (TPS) thresholds.",
+            "What are the client expected p95/p99 response latency SLAs and maximum peak concurrent user transactions?",
+            "Assumes standard enterprise p95 response time under 250ms for up to 3,000 peak concurrent active sessions.",
+            r"(?:sub-\d+|\d+\s*ms|\d+\s*tps|\b(?:latency|sla|slas|throughput|concurrency|concurrent|response\s+time)\b)"
+        ),
+        (
+            "REQ-AMB-02",
+            "Integration Interfaces & Data Schemas Underspecified",
+            r"(?:seamlessly\s+integrate|existing\s+tools|current\s+systems|our\s+tech\s+stack|standard\s+interfaces|integrate\s+with\s+our|existing\s+infrastructure)",
+            "The customer RFP expects integration with internal systems but does not document API protocols, payload schemas, or authentication mechanisms.",
+            "Could the client provide OpenAPI/Swagger specs, authentication standards, and sample payloads for the target integration systems?",
+            "Assumes integration endpoints support modern REST/JSON APIs with OAuth2 or token-based authentication and sandbox testing environments.",
+            r"(?:\b(?:rest|api|apis|oauth|oauth2|endpoint|endpoints|graphql|grpc|fhir|odata|webhook|webhooks|connector)\b)"
+        ),
+        (
+            "REQ-AMB-03",
+            "Milestone Delivery Gates Underspecified",
+            r"(?:as\s+soon\s+as\s+practical|as\s+soon\s+as\s+possible|asap|agile\s+timeline|flexible\s+schedule|in\s+a\s+timely\s+manner|launch\s+soon|fast-track)",
+            "The customer RFP uses open-ended timeline phrasing without firm pilot, UAT, or final go-live calendar target dates.",
+            "What is the client targeted production go-live calendar date, and are there operational freeze windows during rollout?",
+            "Assumes a structured 12-week delivery framework: 2-week Discovery, 6-week Iterative Build, 2-week UAT, and 2-week Cutover.",
+            r"(?:\b(?:\d+\s*weeks?|\d+\s*months?|sprint|sprints|milestone|milestones|phase\s*\d|w1|w2|w3|w4|uat|cutover|kickoff)\b)"
+        ),
+        (
+            "REQ-AMB-04",
+            "Commercial Budget & Billing Model Underspecified",
+            r"(?:reasonable\s+(?:and\s+)?(?:cost-effective\s+)?(?:pricing|terms|cost|rates)|cost-effective|budget\s+to\s+be\s+agreed|pricing\s+upon\s+discussion|competitive\s+(?:cost|rates|pricing)|market\s+rates)",
+            "The customer RFP omits a clear target budget cap or preferred billing structure (fixed-fee vs time & materials).",
+            "What is the approved budgetary envelope or expected commercial model (fixed-price milestone vs milestone T&M)?",
+            "Proposal establishes a firm fixed-price core scope, with any post-discovery scope modifications handled via formal change requests.",
+            r"(?:[\$€£]\s*[\d,]+|\b(?:fixed[\s\-]fee|fixed[\s\-]price|itemized|t&m|not-to-exceed|all-inclusive)\b)"
+        ),
+        (
+            "REQ-AMB-05",
+            "Security & Compliance Standards Underspecified",
+            r"(?:enterprise-grade\s+security|industry\s+standard\s+compliance|robust\s+security|standard\s+data\s+protection|modern\s+security)",
+            "The customer RFP states general security expectations without naming mandatory compliance certifications (SOC 2, ISO 27001, HIPAA, GDPR).",
+            "Which specific security standards (e.g. SOC 2 Type II, ISO 27001, GDPR) and audit logs are required by your compliance team?",
+            "Assumes AES-256 encryption at rest, TLS 1.3 in transit, and role-based access control with annual SOC 2 compliance documentation.",
+            r"(?:\b(?:soc\s*2|iso\s*27001|gdpr|hipaa|aes-256|tls\s*1\.[23]|rbac|encryption\s+at\s+rest)\b)"
+        )
+    ]
+
+    ambiguous = []
+
+    for req_id, title, pat, reason, q, assum, mit_pat in patterns:
+        m = re.search(pat, rfp_text, re.I)
+        if m:
+            start = max(0, rfp_text.rfind("\n", 0, m.start()))
+            end = rfp_text.find("\n", m.end())
+            if end == -1:
+                end = len(rfp_text)
+            snippet = rfp_text[start:end].strip()
+            if not snippet:
+                snippet = m.group(0)
+
+            # Check how proposal handled this ambiguous requirement
+            matches_vague_term = bool(re.search(pat, proposal_text, re.I))
+            has_pos_assumption = bool(re.search(r"(?:we\s+assume|assumes?\s+(?:that|standard|a\s+|up\s+to|concrete|normal)|assuming|baseline\s+(?:of|sla|throughput|parameters|traffic|delivery)|assumptions?:|\bkey\s+assumptions\b)", proposal_text, re.I))
+            has_concrete_metrics = bool(re.search(mit_pat, proposal_text, re.I))
+
+            if (has_pos_assumption or has_concrete_metrics) and not matches_vague_term:
+                handling = "HANDLED_WITH_ASSUMPTIONS"
+            elif has_pos_assumption and has_concrete_metrics:
+                handling = "HANDLED_WITH_ASSUMPTIONS"
+            elif matches_vague_term:
+                handling = "REPEATED_VAGUELY"
+            else:
+                handling = "UNADDRESSED"
+
+            ambiguous.append(
+                AmbiguousRequirement(
+                    requirement_id=req_id,
+                    requirement_title=title,
+                    rfp_snippet=snippet,
+                    ambiguity_reason=reason,
+                    proposal_handling=handling,
+                    clarification_question=q,
+                    recommended_assumption=assum,
+                )
+            )
+
+    return ambiguous
+
+
 def build_disqualified_mismatch_report(
     rfp_client: str,
     prop_target: str,
@@ -235,6 +335,7 @@ def build_disqualified_mismatch_report(
         top_risks_and_remediations=[
             f"🚨 FATAL DISQUALIFICATION: Proposal targets '{prop_target}' instead of '{rfp_client}'. You must completely retarget this proposal before submission."
         ],
+        ambiguous_requirements=[],
         rfp_metrics=rfp_metrics or {},
         proposal_metrics=proposal_metrics or {},
         engine_mode=engine_mode,
@@ -403,6 +504,8 @@ MANDATORY INSTRUCTIONS:
 
     report.overall_score_pct = round(total_weighted, 1)
     report.overall_traffic_light = get_traffic_light(report.overall_score_pct)
+    if not getattr(report, "ambiguous_requirements", None):
+        report.ambiguous_requirements = detect_ambiguous_requirements(rfp_text, proposal_text)
     report.rfp_metrics = rfp_metrics or {}
     report.proposal_metrics = proposal_metrics or {}
     return report
@@ -774,6 +877,8 @@ We commit to a fixed, all-inclusive investment aligned with {client_name}'s stat
             )
         )
 
+    amb_reqs = detect_ambiguous_requirements(rfp_text, proposal_text)
+
     return ProposalEvaluationReport(
         proposal_title=proposal_title,
         rfp_title=rfp_title,
@@ -783,6 +888,7 @@ We commit to a fixed, all-inclusive investment aligned with {client_name}'s stat
         executive_summary=exec_verdict,
         rubric_scores=rubric_scores,
         requirement_gaps=gaps,
+        ambiguous_requirements=amb_reqs,
         top_strengths=[f"Strong functional alignment with {client_name}'s requirements."] if overall_pct >= 50.0 else [],
         top_risks_and_remediations=[f"**{g.requirement_title}:** {g.issue_description}" for g in gaps],
         rfp_metrics=rfp_metrics or {},

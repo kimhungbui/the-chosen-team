@@ -11,11 +11,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import schema.proposal_models
+importlib.reload(schema.proposal_models)
 import services.scoring_engine
 importlib.reload(services.scoring_engine)
 from services.scoring_engine import evaluate_proposal, DEFAULT_WEIGHTS
 from data.sample_data import SAMPLE_DATASETS
-from schema.proposal_models import TrafficLight, RequirementCoverageStatus
+from schema.proposal_models import TrafficLight, RequirementCoverageStatus, AmbiguousRequirement
 
 # Page Configuration
 st.set_page_config(
@@ -33,8 +35,8 @@ st.markdown("""
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     .stApp {
-        background-color: #0F172A;
-        color: #F8FAFC;
+        background-color: #FFFFFF;
+        color: #000000;
     }
     .main-header {
         background: linear-gradient(135deg, #1E1B4B 0%, #312E81 50%, #4338CA 100%);
@@ -221,6 +223,12 @@ with st.sidebar:
                 "rfp_path": "sample_data/fintech_fraud/rfp.md",
                 "rfp_title": "Global Payments Fraud Engine RFP",
                 "proposals_dir": "sample_data/fintech_fraud",
+            },
+            "retail_ambiguous": {
+                "name": "🛍️ Apex Commerce (Unclear & Ambiguous Client Requirements)",
+                "rfp_path": "sample_data/retail_ambiguous/rfp.md",
+                "rfp_title": "Apex Commerce Personalization Suite RFP",
+                "proposals_dir": "sample_data/retail_ambiguous",
             },
         }
 
@@ -435,10 +443,11 @@ st.markdown(f"#### 💡 Executive Verdict\n{report.executive_summary}")
 st.markdown("---")
 
 # Main Analysis Tabs
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 7-Criterion Scorecard",
     "🎯 RFP Requirement Traceability Matrix",
     "✍️ Actionable Paragraph Rewrites",
+    "❓ Customer Ambiguity & RFI Tracker",
     "🔍 Side-by-Side Document Inspector"
 ])
 
@@ -545,8 +554,55 @@ with tab3:
             st.code(gap.actionable_rewrite, language="markdown")
             st.markdown("---")
 
-# TAB 4: Document Inspector
+# TAB 4: Customer Requirement Ambiguity & Pre-Bid RFI Tracker
 with tab4:
+    st.markdown("### ❓ Customer Requirement Ambiguity & Pre-Bid RFI Tracker")
+    st.caption("Audits unclear, vague, or unquantified customer requirements in the RFP. Highlights scope creep risks, pre-bid clarification questions, and defensive baseline assumptions.")
+
+    if not getattr(report, "ambiguous_requirements", None):
+        st.success("🎉 **Crystal-Clear Client Requirements:** All customer requirements contain specific, measurable boundaries and acceptance criteria.")
+    else:
+        amb_list = report.ambiguous_requirements
+        handled_cnt = sum(1 for a in amb_list if a.proposal_handling == "HANDLED_WITH_ASSUMPTIONS")
+        vague_cnt = sum(1 for a in amb_list if a.proposal_handling == "REPEATED_VAGUELY")
+        unaddressed_cnt = sum(1 for a in amb_list if a.proposal_handling == "UNADDRESSED")
+
+        ac1, ac2, ac3, ac4 = st.columns(4)
+        ac1.metric("Ambiguous Requirements Detected", len(amb_list))
+        ac2.metric("Mitigated with Assumptions", handled_cnt)
+        ac3.metric("Repeated Vaguely (Risk)", vague_cnt)
+        ac4.metric("Unaddressed in Proposal", unaddressed_cnt)
+
+        st.markdown("---")
+
+        for amb in amb_list:
+            if amb.proposal_handling == "HANDLED_WITH_ASSUMPTIONS":
+                p_badge = "🟢 MITIGATED WITH ASSUMPTIONS"
+                p_desc = "The proposal author proactively bounded this ambiguity by stating explicit sizing, latency SLAs, or discovery gates."
+            elif amb.proposal_handling == "REPEATED_VAGUELY":
+                p_badge = "🟡 REPEATED VAGUELY (SCOPE CREEP RISK)"
+                p_desc = "The proposal author echoed the customer's vague terms without defining quantitative boundaries or baseline assumptions."
+            else:
+                p_badge = "🔴 UNADDRESSED IN PROPOSAL"
+                p_desc = "The proposal completely ignored this ambiguous requirement, leaving project scope completely open."
+
+            with st.expander(f"⚠️ {amb.requirement_title} (`{amb.requirement_id}`) — {p_badge}", expanded=True):
+                st.markdown(f"**📌 Customer's Unclear RFP Statement:**\n> *\"{amb.rfp_snippet}\"*")
+                st.error(f"**⚠️ Ambiguity & Scope Creep Risk:** {amb.ambiguity_reason}")
+                st.info(f"**🔍 Proposal Handling Status ({p_badge}):** {p_desc}")
+
+                q_col, a_col = st.columns(2)
+                with q_col:
+                    st.markdown("#### ❓ Pre-Bid Clarification Question (RFI to Client)")
+                    st.caption("Submit this exact question to the customer during pre-bid Q&A:")
+                    st.code(amb.clarification_question, language="markdown")
+                with a_col:
+                    st.markdown("#### 🛡️ Recommended Baseline Assumption (For Proposal)")
+                    st.caption("Insert this protective assumption text into your proposal draft:")
+                    st.code(amb.recommended_assumption, language="markdown")
+
+# TAB 5: Document Inspector
+with tab5:
     st.markdown("### 🔍 Side-by-Side Document Inspector")
     doc_col1, doc_col2 = st.columns(2)
     with doc_col1:

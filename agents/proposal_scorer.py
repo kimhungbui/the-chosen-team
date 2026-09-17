@@ -43,6 +43,16 @@ CRITICAL SCORING RULES:
     - Set all rubric scores to 1.0 (with 0.0 weighted score)
     - In `executive_summary`, state prominently: "🚨 FATAL DISQUALIFICATION (Score: 0.0%): Target Company Mismatch. The proposal is targeted for a different company than the issuing RFP client. In procurement, submitting a proposal to the wrong organization results in an automatic 0% score."
     - In `requirement_gaps`, include a CRITICAL gap with `requirement_id = 'REQ-DISQUALIFY'` detailing the company name mismatch.
+- UNCLEAR / AMBIGUOUS CUSTOMER REQUIREMENT AUDIT:
+  * Inspect the customer's RFP for any requirements that are ambiguous, vague, unquantified, or underspecified (e.g., "blazing fast performance", "integrate seamlessly with our existing tools", "as soon as practical", "reasonable pricing", "high availability" without numerical SLAs, concurrency targets, or protocol specs).
+  * For each ambiguous requirement, populate `ambiguous_requirements`:
+    - `requirement_id`: ID or section reference (e.g. REQ-02, REQ-05, TECH-01)
+    - `requirement_title`: Short descriptive title
+    - `rfp_snippet`: Exact quote from the customer's RFP
+    - `ambiguity_reason`: Explain why this requirement is not clear (e.g. missing latency bounds, undefined active user volumes, unspecified protocol versions)
+    - `proposal_handling`: How the proposal handled it: 'HANDLED_WITH_ASSUMPTIONS' (bounded with clear numbers/assumptions), 'REPEATED_VAGUELY' (blindly repeated the buzzwords), or 'UNADDRESSED' (ignored, high scope creep risk)
+    - `clarification_question`: Concrete pre-bid clarification question (RFI) to ask the customer
+    - `recommended_assumption`: Protective scoping assumption to insert into the proposal to prevent scope creep
 """
 
 

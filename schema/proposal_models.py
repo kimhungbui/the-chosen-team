@@ -103,6 +103,19 @@ class RequirementGap(BaseModel):
     actionable_rewrite: str = Field(..., description="Concrete, copy-pasteable paragraph rewrite or new section text")
 
 
+class AmbiguousRequirement(BaseModel):
+    requirement_id: str = Field(..., description="ID or reference of ambiguous requirement e.g. REQ-02 or SEC-3")
+    requirement_title: str = Field("Ambiguous Requirement", description="Short title of the requirement")
+    rfp_snippet: str = Field(..., description="Vague or underspecified snippet from customer RFP")
+    ambiguity_reason: str = Field(..., description="Why this requirement is not clear (e.g. lacks metrics, missing tech stack, undefined volume/SLA)")
+    proposal_handling: str = Field(
+        "UNADDRESSED", 
+        description="How proposal handled it: HANDLED_WITH_ASSUMPTIONS, REPEATED_VAGUELY, or UNADDRESSED"
+    )
+    clarification_question: str = Field(..., description="Specific pre-bid RFI clarification question to ask the customer")
+    recommended_assumption: str = Field(..., description="Protective scoping assumption to insert into proposal to prevent scope creep")
+
+
 class ProposalEvaluationReport(BaseModel):
     proposal_title: str = Field(..., description="Name or file of draft proposal")
     rfp_title: str = Field(..., description="Name of matching RFP")
@@ -115,6 +128,10 @@ class ProposalEvaluationReport(BaseModel):
     executive_summary: str = Field(..., description="Executive verdict summarizing readiness and key issues")
     rubric_scores: List[CriterionScore] = Field(default_factory=list, description="Scores across all 7 rubrics")
     requirement_gaps: List[RequirementGap] = Field(default_factory=list, description="Detailed RFP gap analysis")
+    ambiguous_requirements: List[AmbiguousRequirement] = Field(
+        default_factory=list,
+        description="Audit of unclear/ambiguous customer requirements, RFI clarification questions, and defensive assumptions"
+    )
     top_strengths: List[str] = Field(default_factory=list, description="Highlighted strong points")
     top_risks_and_remediations: List[str] = Field(default_factory=list, description="Critical risks needing attention before submission")
     rfp_metrics: Dict[str, Any] = Field(default_factory=dict, description="Format, page/slide count, and word metrics for RFP")
@@ -123,4 +140,5 @@ class ProposalEvaluationReport(BaseModel):
     engine_notice: str = Field("", description="Notice or warnings from engine execution")
     llm_error: Optional[str] = Field(None, description="Error message if LLM agent evaluation failed")
     llm_error_traceback: Optional[str] = Field(None, description="Full traceback of LLM failure")
+
 

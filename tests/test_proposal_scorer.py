@@ -253,5 +253,40 @@ def test_custom_company_name_mismatch_and_match():
     assert rep_right.overall_score_pct > 0.0
 
 
+def test_ambiguous_customer_requirements_detection_and_mitigation():
+    with open("sample_data/retail_ambiguous/rfp.md") as f:
+        rfp_text = f.read()
+    with open("sample_data/retail_ambiguous/response_3_strong.md") as f:
+        strong_prop = f.read()
+    with open("sample_data/retail_ambiguous/response_1_weak.md") as f:
+        weak_prop = f.read()
+
+    rep_strong = evaluate_proposal(rfp_text=rfp_text, proposal_text=strong_prop, force_fallback=True)
+    rep_weak = evaluate_proposal(rfp_text=rfp_text, proposal_text=weak_prop, force_fallback=True)
+
+    # 1. Ambiguous requirements must be detected in the vague customer RFP
+    assert len(rep_strong.ambiguous_requirements) >= 3, "Must detect ambiguous requirements in RFP"
+    assert len(rep_weak.ambiguous_requirements) >= 3
+
+    # 2. Each ambiguous requirement must have clarification question and protective assumption
+    for amb in rep_strong.ambiguous_requirements:
+        assert len(amb.clarification_question) > 10, "Must provide pre-bid RFI clarification question"
+        assert len(amb.recommended_assumption) > 10, "Must provide protective baseline assumption"
+
+    # 3. Strong proposal mitigates ambiguities with baseline assumptions
+    handled_count = sum(1 for a in rep_strong.ambiguous_requirements if a.proposal_handling == "HANDLED_WITH_ASSUMPTIONS")
+    assert handled_count >= 2, "Strong proposal must handle ambiguities with explicit assumptions"
+
+    # 4. Weak proposal naively repeats vague buzzwords
+    vague_count = sum(1 for a in rep_weak.ambiguous_requirements if a.proposal_handling == "REPEATED_VAGUELY")
+    assert vague_count >= 2, "Weak proposal should be caught repeating vague customer terms"
+
+    # 5. Strong proposal must score substantially higher than weak proposal
+    assert rep_strong.overall_score_pct > rep_weak.overall_score_pct
+    assert rep_strong.overall_traffic_light == TrafficLight.GREEN
+    assert rep_weak.overall_traffic_light in [TrafficLight.RED, TrafficLight.YELLOW]
+
+
+
 
 
