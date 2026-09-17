@@ -39,3 +39,7 @@ ENV/
 storage/
 *.db
 *.sqlite
+
+# OS & Archives
+.DS_Store
+*.zip

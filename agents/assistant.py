@@ -1,7 +1,6 @@
 import os
 from agno.agent import Agent
 from agno.models.google import Gemini
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 def get_model(model_id: str | None = None) -> Gemini:
     """
@@ -20,7 +19,11 @@ def create_assistant(
     """
     tools = []
     if enable_web_search:
-        tools.append(DuckDuckGoTools())
+        try:
+            from agno.tools.duckduckgo import DuckDuckGoTools
+            tools.append(DuckDuckGoTools())
+        except ImportError:
+            pass
 
     agent = Agent(
         name="Team Assistant",

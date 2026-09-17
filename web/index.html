@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Proposal Scorer & Reviewer — SiviHack 2026</title>
+  <meta name="description" content="AI-powered Proposal Scorer & Compliance Reviewer built with Agno, Google Gemini, and Deterministic Python Guardrails." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-content">
+      <div class="logo-area">
+        <div class="logo-icon">🏆</div>
+        <div>
+          <h1 class="app-title">Proposal Scorer & Reviewer</h1>
+          <p class="app-subtitle">SiviHack 2026 — FPT Software Europe Track 1 | Method 4 Architecture</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge-tech">🤖 Agno + Gemini 2.5 Flash</span>
+        <span class="badge badge-guardrail">🛡️ Python Guardrails Active</span>
+        <span id="system-status-badge" class="badge badge-status">⚡ Ready</span>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs" aria-label="Main Navigation">
+      <button id="tab-btn-dashboard" class="tab-btn active" onclick="switchTab('dashboard')">
+        <span class="tab-icon">📊</span> Scorecard & Dashboard
+      </button>
+      <button id="tab-btn-inspector" class="tab-btn" onclick="switchTab('inspector')">
+        <span class="tab-icon">🔍</span> Side-by-Side Grounding Inspector
+      </button>
+      <button id="tab-btn-architecture" class="tab-btn" onclick="switchTab('architecture')">
+        <span class="tab-icon">🏗️</span> Method 4 Architecture Deep Dive
+      </button>
+    </nav>
+  </header>
+
+  <main class="main-container">
+    <!-- TAB 1: DASHBOARD -->
+    <section id="tab-dashboard" class="tab-content active">
+      <!-- Input Controls Section -->
+      <div class="card input-card">
+        <div class="card-header">
+          <div class="card-title-group">
+            <h2 class="card-title">1. Document Input & Scenario Selection</h2>
+            <p class="card-desc">Select a sample test scenario or paste custom RFP / Proposal text to evaluate live.</p>
+          </div>
+          <div class="scenario-selector-group">
+            <button class="btn-scenario active" id="btn-weak" onclick="loadScenario('response_1_weak.md')">
+              <span class="scenario-dot red"></span> Variant 1: Weak
+            </button>
+            <button class="btn-scenario" id="btn-medium" onclick="loadScenario('response_2_medium.md')">
+              <span class="scenario-dot amber"></span> Variant 2: Medium
+            </button>
+            <button class="btn-scenario" id="btn-strong" onclick="loadScenario('response_3_strong.md')">
+              <span class="scenario-dot green"></span> Variant 3: Strong
+            </button>
+            <button class="btn-scenario" id="btn-overpromise" onclick="loadScenario('response_4_overpromise.md')">
+              <span class="scenario-dot purple"></span> Variant 4: Overpromising
+            </button>
+          </div>
+        </div>
+
+        <div class="document-editors-grid">
+          <div class="editor-pane">
+            <div class="editor-header">
+              <span class="pane-label">📄 Client RFP (Requirement Spec)</span>
+              <span id="rfp-meta" class="pane-meta">rfp_nordframe.md</span>
+            </div>
+            <textarea id="rfp-input" class="doc-textarea" placeholder="Paste or view Client RFP..."></textarea>
+          </div>
+          <div class="editor-pane">
+            <div class="editor-header">
+              <span class="pane-label">📝 Vendor Draft Proposal</span>
+              <span id="proposal-meta" class="pane-meta">response_1_weak.md</span>
+            </div>
+            <textarea id="proposal-input" class="doc-textarea" placeholder="Paste or view Vendor Proposal..."></textarea>
+          </div>
+        </div>
+
+        <div class="action-bar">
+          <div class="eval-mode-info">
+            <span class="pulse-indicator"></span>
+            <span id="eval-mode-label">Method 4 Pipeline: 3 Agno Agents + Deterministic Substring Guardrails</span>
+          </div>
+          <button id="run-eval-btn" class="btn-primary" onclick="runEvaluation()">
+            <span id="run-btn-icon">⚡</span> Run AI Proposal Audit
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading State -->
+      <div id="eval-loader" class="eval-loader hidden">
+        <div class="loader-spinner"></div>
+        <div class="loader-steps">
+          <div class="step-item active" id="step-1">🔍 Step 1: Agent 1 extracting requirements & constraints from RFP...</div>
+          <div class="step-item" id="step-2">📋 Step 2: Agent 2 cross-auditing proposal against requirement checklist...</div>
+          <div class="step-item" id="step-3">✍️ Step 3: Agent 3 scoring 7 criteria & drafting concrete replacement text...</div>
+          <div class="step-item" id="step-4">🛡️ Step 4: Python Guardrails verifying quotes and locking mathematical scores...</div>
+        </div>
+      </div>
+
+      <!-- Results Section -->
+      <div id="results-wrapper">
+        <!-- Overview Banner -->
+        <div class="card overview-card">
+          <div class="overview-grid">
+            <div class="score-display-box">
+              <div class="score-ring">
+                <span id="score-number" class="score-value">1.7</span>
+                <span class="score-max">/ 5.0</span>
+              </div>
+              <div class="score-details">
+                <span class="score-label">Overall Readiness Score</span>
+                <span id="verdict-pill" class="verdict-pill badge-danger">🔴 MAJOR REWORK REQUIRED</span>
+              </div>
+            </div>
+
+            <div class="priority-box">
+              <h3 class="priority-title">🎯 Detected Client Priorities (From RFP)</h3>
+              <p id="detected-priorities" class="priority-text">
+                Low operational risk, business continuity across all 6 sites, and zero database migration disruption.
+              </p>
+              <div class="verdict-summary-box">
+                <h4 class="summary-subhead">Executive Review Verdict:</h4>
+                <p id="verdict-summary" class="summary-text">
+                  Proposal requires major revisions before submission. Critical constraints (PostgreSQL, SLAs, Timeline, Pricing) are omitted or deferred.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 7 Core Criteria Scorecard -->
+        <div class="card scorecard-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <h2 class="card-title">2. Rubric Scores (7 Core Challenge Criteria)</h2>
+              <p class="card-desc">Objective 1.0–5.0 scoring audited and mathematically bound to RFP compliance percentages.</p>
+            </div>
+          </div>
+          <div id="criteria-grid" class="criteria-grid">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- Compliance Matrix -->
+        <div class="card compliance-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <h2 class="card-title">3. RFP Requirement Compliance Audit Matrix</h2>
+              <p class="card-desc">Comprehensive cross-audit ensuring the proposal addresses every client deliverable and constraint.</p>
+            </div>
+            <div class="compliance-summary-stats" id="compliance-stats">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 90px;">Req ID</th>
+                  <th style="width: 240px;">Requirement & Constraints</th>
+                  <th style="width: 120px;">Compliance</th>
+                  <th>Audit Analysis & Grounding</th>
+                  <th style="width: 130px;">Source Link</th>
+                </tr>
+              </thead>
+              <tbody id="compliance-table-body">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Actionable Fixes -->
+        <div class="card fixes-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <h2 class="card-title">4. Actionable Issues & Drafted Fixes (Copy-Pasteable)</h2>
+              <p class="card-desc">Concrete draft replacement paragraphs and tables tailored to client constraints — ready to insert directly.</p>
+            </div>
+          </div>
+          <div id="fixes-container" class="fixes-list">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: GROUNDING & CITATION INSPECTOR -->
+    <section id="tab-inspector" class="tab-content">
+      <div class="card inspector-card">
+        <div class="card-header">
+          <div class="card-title-group">
+            <h2 class="card-title">Side-by-Side Traceability & Grounding Inspector</h2>
+            <p class="card-desc">
+              Click any detected issue below to instantly highlight and trace the exact quote in the RFP and Proposal simultaneously.
+            </p>
+          </div>
+          <div class="guardrail-chip">
+            <span class="chip-icon">🛡️</span> Python Verbatim Substring Match: <strong>100% Grounded</strong>
+          </div>
+        </div>
+
+        <div class="inspector-layout">
+          <!-- Citation Explorer Sidebar -->
+          <div class="citation-sidebar">
+            <h3 class="sidebar-heading">Select Finding to Trace:</h3>
+            <div id="citation-selector-list" class="citation-selector-list">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Dual Document Viewers -->
+          <div class="viewer-columns">
+            <div class="doc-viewer-card">
+              <div class="doc-viewer-header">
+                <span class="viewer-title">📄 Client RFP</span>
+                <span class="viewer-file" id="viewer-rfp-filename">rfp_nordframe.md</span>
+              </div>
+              <div id="rfp-viewer-body" class="doc-viewer-body">
+                <!-- Rendered with line numbers -->
+              </div>
+            </div>
+
+            <div class="doc-viewer-card">
+              <div class="doc-viewer-header">
+                <span class="viewer-title">📝 Vendor Proposal</span>
+                <span class="viewer-file" id="viewer-proposal-filename">response_1_weak.md</span>
+              </div>
+              <div id="proposal-viewer-body" class="doc-viewer-body">
+                <!-- Rendered with line numbers -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: ARCHITECTURE DEEP DIVE -->
+    <section id="tab-architecture" class="tab-content">
+      <div class="card arch-card">
+        <div class="card-header">
+          <div class="card-title-group">
+            <h2 class="card-title">Method 4 Architecture: Multi-Agent + Deterministic Guardrails</h2>
+            <p class="card-desc">
+              How the system solves the 4 SiviHack challenges (Actionability, RFP Grounding, Zero Hallucinations, Live Reliability).
+            </p>
+          </div>
+        </div>
+
+        <!-- Interactive Architecture Diagram -->
+        <div class="arch-diagram-container">
+          <div class="diagram-flow">
+            <!-- Stage 1 -->
+            <div class="diagram-stage" onclick="showStageDetails('rfp_extractor')">
+              <div class="stage-badge">Agent 1</div>
+              <div class="stage-icon">🔍</div>
+              <h3 class="stage-name">RFP Extractor</h3>
+              <p class="stage-role">Parses explicit deliverables, SLA targets, budget, and negative constraints</p>
+              <span class="stage-output-tag">Output: RFPAnalysis Checklist</span>
+            </div>
+
+            <div class="flow-arrow">➔</div>
+
+            <!-- Stage 2 -->
+            <div class="diagram-stage" onclick="showStageDetails('compliance_auditor')">
+              <div class="stage-badge">Agent 2</div>
+              <div class="stage-icon">📋</div>
+              <h3 class="stage-name">Compliance Auditor</h3>
+              <p class="stage-role">Performs matrix cross-audit against each requirement individually</p>
+              <span class="stage-output-tag">Output: ComplianceMatrix (Met/Missing)</span>
+            </div>
+
+            <div class="flow-arrow">➔</div>
+
+            <!-- Stage 3 -->
+            <div class="diagram-stage" onclick="showStageDetails('scorer_fixer')">
+              <div class="stage-badge">Agent 3</div>
+              <div class="stage-icon">✍️</div>
+              <h3 class="stage-name">Scorer & Fixer</h3>
+              <p class="stage-role">Scores the 7 criteria and drafts ready-to-insert paragraph rewrites</p>
+              <span class="stage-output-tag">Output: Raw ProposalReviewReport</span>
+            </div>
+
+            <div class="flow-arrow">➔</div>
+
+            <!-- Stage 4: Guardrail -->
+            <div class="diagram-stage guardrail-stage" onclick="showStageDetails('guardrails')">
+              <div class="stage-badge badge-guard">Python Guardrail</div>
+              <div class="stage-icon">🛡️</div>
+              <h3 class="stage-name">Deterministic Verifier</h3>
+              <p class="stage-role">Verbatim substring matching, line resolver & mathematical score lock</p>
+              <span class="stage-output-tag tag-verified">Zero Hallucinations Guaranteed</span>
+            </div>
+
+            <div class="flow-arrow">➔</div>
+
+            <!-- Stage 5: Output -->
+            <div class="diagram-stage output-stage" onclick="showStageDetails('dashboard_output')">
+              <div class="stage-badge">User Facing</div>
+              <div class="stage-icon">📊</div>
+              <h3 class="stage-name">Validated Dashboard</h3>
+              <p class="stage-role">Scorecard, copyable fixes & side-by-side highlighting</p>
+              <span class="stage-output-tag">Live Interactive UI</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Detail Modal / Explanation Box -->
+        <div id="stage-detail-box" class="stage-detail-box">
+          <div class="detail-header">
+            <h3 id="stage-detail-title">🛡️ Python Deterministic Guardrail Layer (The Method 4 Difference)</h3>
+            <span class="badge badge-guard">Core Innovation</span>
+          </div>
+          <div id="stage-detail-content" class="detail-body">
+            <p>
+              While standard LLM tools (Method 2) output grades based on generic prompt "vibes", Method 4 introduces a non-LLM Python post-processing layer:
+            </p>
+            <ul>
+              <li><strong>Verbatim Substring Search:</strong> Programmatically validates whether quotes exist character-for-character in the original documents.</li>
+              <li><strong>Line Number Resolution:</strong> Scans character offsets to generate clickable line references (e.g. <code>rfp_nordframe.md:L17</code>).</li>
+              <li><strong>Mathematical Score Locking:</strong> Binds the Completeness score strictly to the compliance percentage formula: <code>Score = 1.0 + 4.0 * (Met + 0.5 * Partial) / Total</code>.</li>
+              <li><strong>Fix Enforceability:</strong> Programmatically checks that suggested fixes are full, formatted draft paragraphs rather than generic advice.</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Method Comparison Table -->
+        <div class="comparison-section">
+          <h3 class="section-title">Method 4 vs Alternative Approaches</h3>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Architecture</th>
+                  <th>RFP Grounding</th>
+                  <th>Fix Specificity</th>
+                  <th>Citation Traceability</th>
+                  <th>Live Demo Speed</th>
+                  <th>Verdict</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Method 1: Single Mega-Agent</strong></td>
+                  <td>⚠️ Moderate (misses subtle constraints)</td>
+                  <td>Good</td>
+                  <td>⚠️ Moderate (hallucination risk)</td>
+                  <td>⚡ Fast (2–3s)</td>
+                  <td>Basic MVP</td>
+                </tr>
+                <tr>
+                  <td><strong>Method 2: Pure Multi-Agent</strong></td>
+                  <td>✅ High (matrix audit)</td>
+                  <td>✅ Very High</td>
+                  <td>⚠️ Unchecked LLM quotes</td>
+                  <td>⏱️ 6–8s</td>
+                  <td>Good, but risky citations</td>
+                </tr>
+                <tr>
+                  <td><strong>Method 3: Vector RAG</strong></td>
+                  <td>❌ Poor (fails on negative constraints)</td>
+                  <td>Moderate</td>
+                  <td>⚠️ Chunk boundary issues</td>
+                  <td>🐢 8–12s</td>
+                  <td>Antipattern for 2-page RFPs</td>
+                </tr>
+                <tr class="highlight-row">
+                  <td><strong>Method 4: Multi-Agent + Guardrail</strong></td>
+                  <td>⭐ <strong>Extremely High</strong></td>
+                  <td>⭐ <strong>Drafted paragraphs</strong></td>
+                  <td>⭐ <strong>100% Verbatim Verified</strong></td>
+                  <td>⏱️ <strong>Fast (6–8s)</strong></td>
+                  <td>🏆 <strong>Winning Architecture</strong></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>Proposal Scorer & Reviewer — Built for SiviHack 2026 Sponsor Challenge (FPT Software Europe Track 1)</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

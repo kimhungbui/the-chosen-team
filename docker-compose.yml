@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  proposal-scorer-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: proposal-scorer:latest
+    container_name: proposal_scorer_ui
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python web/server.py 8080
