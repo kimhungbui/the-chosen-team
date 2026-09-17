@@ -1,0 +1,91 @@
+"""
+Pydantic Data Models for FPT Software Europe Proposal Scorer System.
+Defines schemas for RFP extraction, 7-criterion rubric scoring,
+citations, requirement gap analysis, and comprehensive evaluation reports.
+"""
+
+from enum import Enum
+from typing import List, Dict, Optional
+from pydantic import BaseModel, Field
+
+
+class TrafficLight(str, Enum):
+    GREEN = "GREEN"    # Strong match / high quality (4.0 - 5.0)
+    YELLOW = "YELLOW"  # Moderate match / needs refinement (2.5 - 3.9)
+    RED = "RED"        # Critical gap / weak / risky (1.0 - 2.4)
+
+
+class RequirementCoverageStatus(str, Enum):
+    FULFILLED = "FULFILLED"
+    PARTIAL_GAP = "PARTIAL_GAP"
+    MISSING = "MISSING"
+    CONTRADICTED = "CONTRADICTED"
+
+
+class RFPRequirement(BaseModel):
+    id: str = Field(..., description="Unique ID for requirement, e.g., REQ-01")
+    title: str = Field(..., description="Short title of the requirement")
+    category: str = Field(..., description="Category: Technical, Scope, Timeline, Pricing, Compliance, Security")
+    description_snippet: str = Field(..., description="Exact requirement snippet or summary from RFP")
+    priority: str = Field("MANDATORY", description="MANDATORY, HIGH, MEDIUM, LOW")
+    section_ref: str = Field("Section 1", description="Section in RFP where this appears")
+
+
+class ExtractedRFP(BaseModel):
+    client_name: str = Field(..., description="Client name, e.g., NordFrame Logistics")
+    project_title: str = Field(..., description="Project name, e.g., Enterprise Cloud Migration & Modernization")
+    executive_summary: str = Field(..., description="High-level overview of RFP goals and problem context")
+    requirements: List[RFPRequirement] = Field(default_factory=list, description="Extracted individual client requirements")
+    recommended_weights: Dict[str, float] = Field(
+        default_factory=lambda: {
+            "problem_understanding": 15.0,
+            "scope_deliverables_clarity": 20.0,
+            "pricing_clarity": 15.0,
+            "timeline_clarity": 15.0,
+            "completeness_vs_rfp": 20.0,
+            "tone_persuasiveness": 5.0,
+            "risk_transparency": 10.0,
+        },
+        description="Suggested rubric weightings (sum to 100)"
+    )
+
+
+class Citation(BaseModel):
+    rfp_section: str = Field("", description="RFP section name or number")
+    rfp_quote: str = Field("", description="Relevant quote or snippet from RFP")
+    proposal_section: str = Field("", description="Proposal section name or number")
+    proposal_quote: str = Field("", description="Relevant quote or snippet from proposal")
+
+
+class CriterionScore(BaseModel):
+    criterion_id: str = Field(..., description="Key identifier e.g. problem_understanding")
+    criterion_name: str = Field(..., description="Display name e.g. Problem Understanding")
+    score_1_to_5: float = Field(..., description="Numerical score from 1.0 to 5.0")
+    weight: float = Field(15.0, description="Percentage weight assigned to this criterion")
+    weighted_score: float = Field(0.0, description="Calculated score (score_1_to_5 * weight / 5)")
+    traffic_light: TrafficLight = Field(TrafficLight.GREEN, description="Status rating")
+    rationale: str = Field(..., description="Detailed explanation of why this score was given")
+    citations: List[Citation] = Field(default_factory=list, description="Supporting document citations")
+    suggested_fixes: List[str] = Field(default_factory=list, description="Quick actionable feedback items")
+
+
+class RequirementGap(BaseModel):
+    requirement_id: str = Field(..., description="Requirement ID from RFP e.g. REQ-03")
+    requirement_title: str = Field(..., description="Requirement title")
+    status: RequirementCoverageStatus = Field(RequirementCoverageStatus.MISSING)
+    rfp_snippet: str = Field("", description="What the RFP requested")
+    proposal_snippet: str = Field("", description="What the proposal currently says (or empty if missing)")
+    issue_description: str = Field(..., description="Explanation of missing or weak coverage")
+    actionable_rewrite: str = Field(..., description="Concrete, copy-pasteable paragraph rewrite or new section text")
+
+
+class ProposalEvaluationReport(BaseModel):
+    proposal_title: str = Field(..., description="Name or file of draft proposal")
+    rfp_title: str = Field(..., description="Name of matching RFP")
+    overall_score_pct: float = Field(..., description="Overall weighted percentage (0.0 to 100.0%)")
+    overall_traffic_light: TrafficLight = Field(TrafficLight.GREEN)
+    executive_summary: str = Field(..., description="Executive verdict summarizing readiness and key issues")
+    rubric_scores: List[CriterionScore] = Field(default_factory=list, description="Scores across all 7 rubrics")
+    requirement_gaps: List[RequirementGap] = Field(default_factory=list, description="Detailed RFP gap analysis")
+    top_strengths: List[str] = Field(default_factory=list, description="Highlighted strong points")
+    top_risks_and_remediations: List[str] = Field(default_factory=list, description="Critical risks needing attention before submission")
