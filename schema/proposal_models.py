@@ -35,6 +35,14 @@ class ExtractedRFP(BaseModel):
     client_name: str = Field(..., description="Client name, e.g., NordFrame Logistics")
     project_title: str = Field(..., description="Project name, e.g., Enterprise Cloud Migration & Modernization")
     executive_summary: str = Field(..., description="High-level overview of RFP goals and problem context")
+    detected_client_priorities: str = Field(
+        "", 
+        description="Implicit client priority/philosophy extracted from RFP (e.g. continuity and minimal disruption over cutting-edge novelty)"
+    )
+    commercial_constraints: List[str] = Field(
+        default_factory=list,
+        description="Budget caps, hard milestone deadlines, and explicit technical exclusions (e.g. no DB migration)"
+    )
     requirements: List[RFPRequirement] = Field(default_factory=list, description="Extracted individual client requirements")
     recommended_weights: Dict[str, float] = Field(
         default_factory=lambda: {
@@ -64,7 +72,15 @@ class CriterionScore(BaseModel):
     weight: float = Field(15.0, description="Percentage weight assigned to this criterion")
     weighted_score: float = Field(0.0, description="Calculated score (score_1_to_5 * weight / 5)")
     traffic_light: TrafficLight = Field(TrafficLight.GREEN, description="Status rating")
-    rationale: str = Field(..., description="Detailed explanation of why this score was given")
+    rationale: str = Field(..., description="Detailed explanation of why this score was given (why high or why low)")
+    score_factors_high: List[str] = Field(
+        default_factory=list,
+        description="Explicit strengths justifying why the score is high (e.g. specific deliverables, transparent budget match)"
+    )
+    score_factors_low: List[str] = Field(
+        default_factory=list,
+        description="Explicit weaknesses/gaps justifying why the score is low (e.g. deferred pricing, vague timeline, omitted SLAs)"
+    )
     citations: List[Citation] = Field(default_factory=list, description="Supporting document citations")
     suggested_fixes: List[str] = Field(default_factory=list, description="Quick actionable feedback items")
 
@@ -82,6 +98,10 @@ class RequirementGap(BaseModel):
 class ProposalEvaluationReport(BaseModel):
     proposal_title: str = Field(..., description="Name or file of draft proposal")
     rfp_title: str = Field(..., description="Name of matching RFP")
+    detected_client_priorities: str = Field(
+        "", 
+        description="Interpreted client strategic priorities and operational sensitivity from RFP"
+    )
     overall_score_pct: float = Field(..., description="Overall weighted percentage (0.0 to 100.0%)")
     overall_traffic_light: TrafficLight = Field(TrafficLight.GREEN)
     executive_summary: str = Field(..., description="Executive verdict summarizing readiness and key issues")

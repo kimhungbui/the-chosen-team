@@ -89,3 +89,61 @@ def test_custom_rubric_weights():
     assert report.overall_score_pct > 80.0
     pricing_crit = next(c for c in report.rubric_scores if c.criterion_id == "pricing_clarity")
     assert pricing_crit.weight == 30.0
+
+
+def test_why_high_why_low_factors_and_citations():
+    rfp_text = SAMPLE_DATASETS["rfp"]["content"]
+    strong_prop = SAMPLE_DATASETS["proposals"]["response_3_strong"]["content"]
+    weak_prop = SAMPLE_DATASETS["proposals"]["response_1_weak"]["content"]
+
+    report_strong = evaluate_proposal(rfp_text=rfp_text, proposal_text=strong_prop, force_fallback=True)
+    report_weak = evaluate_proposal(rfp_text=rfp_text, proposal_text=weak_prop, force_fallback=True)
+
+    # Verify detected client priorities (Level 3)
+    assert len(report_strong.detected_client_priorities) > 10, "Should detect client strategic priorities"
+
+    # Verify strong proposal has why-high factors
+    strong_pricing = next(c for c in report_strong.rubric_scores if c.criterion_id == "pricing_clarity")
+    assert strong_pricing.score_1_to_5 >= 4.5
+    assert len(strong_pricing.score_factors_high) > 0, "Strong pricing must explain why score is high"
+    assert len(strong_pricing.citations) > 0, "Must include supporting citations"
+
+    # Verify weak proposal has why-low factors
+    weak_pricing = next(c for c in report_weak.rubric_scores if c.criterion_id == "pricing_clarity")
+    assert weak_pricing.score_1_to_5 <= 1.5
+    assert len(weak_pricing.score_factors_low) > 0, "Weak pricing must explain why score was penalized"
+    assert len(weak_pricing.citations) > 0, "Must include citations pointing out omission/deferral"
+
+
+def test_arbitrary_domain_evaluation():
+    custom_rfp = """
+    # Request for Proposal: Clinical Trial Telehealth Platform
+    **Client:** St. Jude Medical Group
+    **Requirements:**
+    1. HIPAA-compliant video consultations with end-to-end encryption.
+    2. Zero database migration — integrate directly with our existing HL7 FHIR server.
+    3. Maximum budget of $150,000 including Year 1 maintenance.
+    4. Pilot launch in 3 months.
+    """
+
+    custom_proposal = """
+    # Proposal: CareLink Telehealth Solution
+    We will build a cloud-based dashboard for video consultations.
+    Pricing will be discussed later depending on requirements.
+    Timeline will be determined after kickoff.
+    """
+
+    report = evaluate_proposal(
+        rfp_text=custom_rfp,
+        proposal_text=custom_proposal,
+        proposal_title="CareLink Proposal",
+        rfp_title="St. Jude Telehealth RFP",
+        force_fallback=True,
+    )
+
+    assert report.overall_score_pct < 50.0, "Vague/deferred proposal should score low"
+    assert report.overall_traffic_light == TrafficLight.RED
+    assert len(report.rubric_scores) == 7
+    assert len(report.requirement_gaps) > 0
+    assert report.detected_client_priorities != ""
+

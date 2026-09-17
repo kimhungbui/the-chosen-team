@@ -1,7 +1,6 @@
 """
-Interactive Streamlit Web Dashboard for FPT Software Europe Proposal Scorer (SiviHack 2026).
-Features live proposal evaluation, 7-criterion rubric scoring, RFP requirement gap matrix,
-exact document citations, dynamic criteria weighting, and actionable paragraph rewrites.
+Proposal Scorer Web Application — FPT Software Europe (SiviHack 2026).
+Interactive Streamlit application for automated proposal evaluation & scoring.
 """
 
 import os
@@ -18,20 +17,17 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Custom Enterprise Modern CSS Styling
+# Styling CSS
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-    
     html, body, [class*="css"] {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
-    
     .stApp {
         background-color: #0F172A;
         color: #F8FAFC;
     }
-    
     .main-header {
         background: linear-gradient(135deg, #1E1B4B 0%, #312E81 50%, #4338CA 100%);
         padding: 1.5rem 2rem;
@@ -40,15 +36,6 @@ st.markdown("""
         margin-bottom: 2rem;
         border: 1px solid rgba(255, 255, 255, 0.1);
     }
-    
-    .score-card {
-        background: #1E293B;
-        border-radius: 16px;
-        padding: 1.5rem;
-        border: 1px solid #334155;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
-    }
-    
     .badge-green {
         background-color: #064E3B;
         color: #34D399;
@@ -58,7 +45,6 @@ st.markdown("""
         font-weight: 700;
         font-size: 0.9rem;
     }
-    
     .badge-yellow {
         background-color: #78350F;
         color: #FBBF24;
@@ -68,7 +54,6 @@ st.markdown("""
         font-weight: 700;
         font-size: 0.9rem;
     }
-    
     .badge-red {
         background-color: #7F1D1D;
         color: #FCA5A5;
@@ -78,17 +63,6 @@ st.markdown("""
         font-weight: 700;
         font-size: 0.9rem;
     }
-    
-    .rewrite-box {
-        background: #0F172A;
-        border-left: 4px solid #6366F1;
-        padding: 1rem 1.25rem;
-        border-radius: 8px;
-        margin-top: 0.5rem;
-        font-family: monospace;
-        color: #E2E8F0;
-    }
-    
     .citation-box {
         background: #1E293B;
         border: 1px dashed #475569;
@@ -119,58 +93,81 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar Configuration Controls
-with st.sidebar:
-    st.image("https://img.shields.io/badge/FPT_Software-Europe_HQ-blue?style=for-the-badge", use_container_width=True)
-    st.markdown("### 📋 Evaluation Settings")
+def extract_text_from_file(uploaded_file) -> str:
+    """Extracts raw text from uploaded .md, .txt, or .pdf files."""
+    if uploaded_file is None:
+        return ""
+    fname = uploaded_file.name.lower()
+    if fname.endswith(".pdf"):
+        try:
+            import pymupdf
+            doc = pymupdf.open(stream=uploaded_file.getvalue(), filetype="pdf")
+            return "\n\n".join([page.get_text() for page in doc]).strip()
+        except Exception as e:
+            st.error(f"Error extracting text from PDF '{uploaded_file.name}': {e}")
+            return ""
+    else:
+        return uploaded_file.getvalue().decode("utf-8", errors="replace").strip()
 
-    # Document Selection Mode
-    data_source = st.radio(
-        "Select Document Source:",
-        ["Official Appendix B Dataset", "Upload Custom RFP & Proposal"],
-        index=0,
+
+# Sidebar
+with st.sidebar:
+    st.markdown("### 📁 Upload Documents")
+    st.caption("Upload any client RFP and draft proposal to evaluate compliance and quality.")
+
+    uploaded_rfp = st.file_uploader(
+        "1. Client RFP (.md, .txt, .pdf)",
+        type=["md", "txt", "pdf"],
+        help="The official client request for proposal document.",
+    )
+    uploaded_proposal = st.file_uploader(
+        "2. Draft Proposal (.md, .txt, .pdf)",
+        type=["md", "txt", "pdf"],
+        help="Your draft response proposal to be evaluated.",
     )
 
     rfp_text = ""
     proposal_text = ""
-    proposal_title = ""
     rfp_title = ""
+    proposal_title = ""
 
-    if data_source == "Official Appendix B Dataset":
-        sample_key = st.selectbox(
-            "Select Draft Proposal Variant:",
-            options=list(SAMPLE_DATASETS["proposals"].keys()),
-            format_func=lambda k: SAMPLE_DATASETS["proposals"][k]["title"],
-            index=0,
-        )
-        selected_prop = SAMPLE_DATASETS["proposals"][sample_key]
-        proposal_text = selected_prop["content"]
-        proposal_title = selected_prop["title"]
-        rfp_text = SAMPLE_DATASETS["rfp"]["content"]
-        rfp_title = SAMPLE_DATASETS["rfp"]["title"]
-
-        st.info(f"**Loaded Variant:** {selected_prop['variant']}\n\n**RFP Target:** NordFrame Logistics")
+    if uploaded_rfp and uploaded_proposal:
+        rfp_text = extract_text_from_file(uploaded_rfp)
+        rfp_title = uploaded_rfp.name
+        proposal_text = extract_text_from_file(uploaded_proposal)
+        proposal_title = uploaded_proposal.name
+        st.success("✅ Both documents loaded successfully.")
     else:
-        st.markdown("#### Upload Custom Files")
-        uploaded_rfp = st.file_uploader("Upload Client RFP (.md or .txt)", type=["md", "txt"])
-        uploaded_proposal = st.file_uploader("Upload Draft Proposal (.md or .txt)", type=["md", "txt"])
+        # Optional quick-loader for instant demo testing
+        with st.expander("⚡ Or load a demo sample file"):
+            st.caption("Test the engine with pre-bundled sample benchmark files:")
+            sample_variant = st.selectbox(
+                "Select Proposal Variant:",
+                options=list(SAMPLE_DATASETS["proposals"].keys()),
+                format_func=lambda k: SAMPLE_DATASETS["proposals"][k]["title"],
+                index=0,
+            )
+            if st.button("📥 Load Sample into Review"):
+                st.session_state["loaded_demo_key"] = sample_variant
+                st.rerun()
 
-        if uploaded_rfp and uploaded_proposal:
-            rfp_text = uploaded_rfp.getvalue().decode("utf-8")
-            rfp_title = uploaded_rfp.name
-            proposal_text = uploaded_proposal.getvalue().decode("utf-8")
-            proposal_title = uploaded_proposal.name
-        else:
-            st.warning("Please upload both RFP and Proposal files to run analysis.")
+        if "loaded_demo_key" in st.session_state and not (uploaded_rfp or uploaded_proposal):
+            d_key = st.session_state["loaded_demo_key"]
+            if d_key in SAMPLE_DATASETS["proposals"]:
+                selected_prop = SAMPLE_DATASETS["proposals"][d_key]
+                proposal_text = selected_prop["content"]
+                proposal_title = selected_prop["title"]
+                rfp_text = SAMPLE_DATASETS["rfp"]["content"]
+                rfp_title = SAMPLE_DATASETS["rfp"]["title"]
+                st.info(f"Loaded Demo Variant: **{selected_prop['variant']}**")
 
     st.markdown("---")
     st.markdown("### ⚙️ Engine Options")
-    use_llm_mode = st.toggle("Use Agno Gemini LLM Multi-Agent", value=True, help="Leverages Google Gemini 2.5 Flash if GEMINI_API_KEY is available.")
-    
+    use_llm_mode = st.toggle("Use Agno Gemini LLM Multi-Agent", value=True)
+
     st.markdown("---")
     st.markdown("### ⚖️ Rubric Criteria Weights")
-    st.caption("Adjust weightings to reflect client priorities (must sum to 100%).")
-
+    
     weights = {}
     weights["problem_understanding"] = st.slider("Problem Understanding", 0.0, 40.0, 15.0, 5.0)
     weights["scope_deliverables_clarity"] = st.slider("Scope & Deliverables Clarity", 0.0, 40.0, 20.0, 5.0)
@@ -190,9 +187,9 @@ with st.sidebar:
         weights = DEFAULT_WEIGHTS
         st.rerun()
 
-# Run Evaluation if documents are available
+# Run Evaluation if documents are loaded
 if rfp_text and proposal_text:
-    with st.spinner("🤖 Analyzing Proposal against RFP across 7 criteria..."):
+    with st.spinner("🤖 Evaluating Proposal against RFP..."):
         report = evaluate_proposal(
             rfp_text=rfp_text,
             proposal_text=proposal_text,
@@ -210,7 +207,7 @@ if rfp_text and proposal_text:
         st.caption(f"Evaluated against target: **{report.rfp_title}**")
 
     with col2:
-        st.metric("Overall Weighted Score", f"{report.overall_score_pct}%", delta=None)
+        st.metric("Overall Weighted Score", f"{report.overall_score_pct}%")
 
     with col3:
         st.markdown("<br>", unsafe_allow_html=True)
@@ -222,10 +219,10 @@ if rfp_text and proposal_text:
             st.markdown('<span class="badge-red">🔴 HIGH RISK / NON-COMPLIANT</span>', unsafe_allow_html=True)
 
     st.markdown("---")
+    if getattr(report, "detected_client_priorities", None):
+        st.info(f"🎯 **Detected Client Strategic Priorities (Level 3 Insight):**\n\n{report.detected_client_priorities}")
 
-    # Executive Verdict Banner
     st.markdown(f"#### 💡 Executive Verdict\n{report.executive_summary}")
-
     st.markdown("---")
 
     # Main Analysis Tabs
@@ -255,10 +252,24 @@ if rfp_text and proposal_text:
                         st.markdown('<span class="badge-red">RED</span>', unsafe_allow_html=True)
 
                 st.progress(crit.score_1_to_5 / 5.0)
-                st.write(f"**Rationale:** {crit.rationale}")
+                st.markdown(f"**Score Rationale:** {crit.rationale}")
+
+                # Why High / Why Low Breakdown
+                if crit.score_factors_high or crit.score_factors_low:
+                    f_col1, f_col2 = st.columns(2)
+                    with f_col1:
+                        if crit.score_factors_high:
+                            st.markdown("🟢 **Why Score is High (Strengths):**")
+                            for h in crit.score_factors_high:
+                                st.markdown(f"- {h}")
+                    with f_col2:
+                        if crit.score_factors_low:
+                            st.markdown("🔴 **Why Score is Penalized (Weaknesses / Gaps):**")
+                            for l in crit.score_factors_low:
+                                st.markdown(f"- {l}")
 
                 if crit.citations:
-                    with st.expander("📍 View Source Citations"):
+                    with st.expander("📍 View Document Citations (RFP vs Proposal)"):
                         for cit in crit.citations:
                             st.markdown(f"""
                             <div class="citation-box">
@@ -268,7 +279,7 @@ if rfp_text and proposal_text:
                             """, unsafe_allow_html=True)
 
                 if crit.suggested_fixes:
-                    st.caption("🔧 **Quick Action Items:** " + " | ".join(crit.suggested_fixes))
+                    st.caption("🔧 **Action Items:** " + " | ".join(crit.suggested_fixes))
 
                 st.markdown("---")
 
@@ -285,13 +296,12 @@ if rfp_text and proposal_text:
                         st.markdown(f"**Requested in RFP:**\n> {gap.rfp_snippet}")
                     with g_col2:
                         st.markdown(f"**Current Proposal Statement:**\n> {gap.proposal_snippet if gap.proposal_snippet else '*(Omitted)*'}")
-
                     st.error(f"**Identified Gap:** {gap.issue_description}")
 
     # TAB 3: Actionable Paragraph Rewrites
     with tab3:
         st.markdown("### ✍️ Specific & Actionable Paragraph Rewrites")
-        st.caption("Copy and paste these pre-formatted rewritten sections directly into your proposal draft to fix identified gaps.")
+        st.caption("Copy and paste these pre-formatted rewritten sections directly into your proposal draft.")
 
         if not report.requirement_gaps:
             st.info("No paragraph rewrites required! The proposal already satisfies all RFP requirements.")
@@ -304,7 +314,7 @@ if rfp_text and proposal_text:
 
     # TAB 4: Document Inspector
     with tab4:
-        st.markdown("### 🔍 Document Inspector")
+        st.markdown("### 🔍 Side-by-Side Document Inspector")
         doc_col1, doc_col2 = st.columns(2)
         with doc_col1:
             st.markdown(f"#### Client RFP ({report.rfp_title})")
@@ -314,4 +324,28 @@ if rfp_text and proposal_text:
             st.text_area("Proposal Raw Text", value=proposal_text, height=500, key="prop_view")
 
 else:
-    st.info("👈 Please select or upload an RFP and Proposal in the sidebar to begin analysis.")
+    st.markdown("""
+    <div style="background: #1E293B; padding: 2.5rem 2rem; border-radius: 16px; border: 1px dashed #475569; text-align: center; margin-top: 1.5rem;">
+        <h2 style="color: #FFFFFF; font-weight: 800; margin-bottom: 0.5rem; font-size: 1.8rem;">Ready to Audit Your Proposal</h2>
+        <p style="color: #94A3B8; font-size: 1.05rem; max-width: 640px; margin: 0 auto 2rem auto;">
+            Upload your <b>Client RFP</b> and <b>Draft Proposal</b> in the sidebar (supports <code>.md</code>, <code>.txt</code>, and <code>.pdf</code>) to run the 2-Stage Multi-Agent quality audit.
+        </p>
+        <div style="display: flex; justify-content: center; gap: 1.2rem; flex-wrap: wrap;">
+            <div style="background: rgba(255,255,255,0.04); padding: 1.2rem 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); width: 240px; text-align: left;">
+                <div style="font-size: 1.8rem;">🎯</div>
+                <div style="font-weight: 700; color: #EEF2FF; margin-top: 0.5rem; font-size: 1rem;">7 Rubrics Scored</div>
+                <div style="font-size: 0.85rem; color: #94A3B8; margin-top: 0.2rem;">Detailed scores with explicit 'Why High' and 'Why Penalized' factor breakdowns.</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.04); padding: 1.2rem 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); width: 240px; text-align: left;">
+                <div style="font-size: 1.8rem;">📍</div>
+                <div style="font-weight: 700; color: #EEF2FF; margin-top: 0.5rem; font-size: 1rem;">Exact Citations</div>
+                <div style="font-size: 0.85rem; color: #94A3B8; margin-top: 0.2rem;">Direct side-by-side quotes from the RFP and proposal with omission detection.</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.04); padding: 1.2rem 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); width: 240px; text-align: left;">
+                <div style="font-size: 1.8rem;">✍️</div>
+                <div style="font-weight: 700; color: #EEF2FF; margin-top: 0.5rem; font-size: 1rem;">Actionable Rewrites</div>
+                <div style="font-size: 0.85rem; color: #94A3B8; margin-top: 0.2rem;">Pre-written, copy-pasteable paragraph rewrites for all detected gaps.</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
