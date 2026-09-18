@@ -1,0 +1,14 @@
+"agno>=3.0.0",
+    "google-genai>=2.0.0",
+    "duckduckgo-search>=8.0.0",
+    "ddgs>=9.0.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "streamlit>=1.30.0",
+    "pymupdf>=1.23.0",
+    "pytest>=8.0.0",
+
+
+fastapi== 0.141.1
+uvicorn== 0.53.0
+python-multipart== 0.0.32
