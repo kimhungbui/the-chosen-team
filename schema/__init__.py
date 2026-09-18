@@ -6,7 +6,13 @@ from schema.proposal_models import (
     Citation,
     CriterionScore,
     RequirementGap,
+    AmbiguousRequirement,
     ProposalEvaluationReport,
+)
+from schema.history_models import (
+    HistoryRecordSummary,
+    HistoryRecordDetail,
+    HistoryStats,
 )
 
 __all__ = [
@@ -17,5 +23,9 @@ __all__ = [
     "Citation",
     "CriterionScore",
     "RequirementGap",
+    "AmbiguousRequirement",
     "ProposalEvaluationReport",
+    "HistoryRecordSummary",
+    "HistoryRecordDetail",
+    "HistoryStats",
 ]
