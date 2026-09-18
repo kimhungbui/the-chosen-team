@@ -4,6 +4,7 @@ Interactive Streamlit application for automated proposal evaluation & scoring.
 """
 
 import os
+import hashlib
 import importlib
 import traceback
 import streamlit as st
@@ -11,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from services.scoring_engine import evaluate_proposal, DEFAULT_WEIGHTS
+from services.scoring_engine import evaluate_proposal, recalculate_report_scores, DEFAULT_WEIGHTS
 from data.sample_data import SAMPLE_DATASETS
 from schema.proposal_models import TrafficLight, RequirementCoverageStatus, AmbiguousRequirement
 
@@ -290,15 +291,20 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### ⚖️ Rubric Criteria Weights")
-    
+    st.caption("⚡ *Adjusting weights recalculates overall scores instantly from precalculated criteria.*")
+
+    for k, v in DEFAULT_WEIGHTS.items():
+        if f"w_{k}" not in st.session_state:
+            st.session_state[f"w_{k}"] = v
+
     weights = {}
-    weights["problem_understanding"] = st.slider("Problem Understanding", 0.0, 40.0, 15.0, 5.0)
-    weights["scope_deliverables_clarity"] = st.slider("Scope & Deliverables Clarity", 0.0, 40.0, 20.0, 5.0)
-    weights["pricing_clarity"] = st.slider("Pricing Clarity", 0.0, 40.0, 15.0, 5.0)
-    weights["timeline_clarity"] = st.slider("Timeline Clarity", 0.0, 40.0, 15.0, 5.0)
-    weights["completeness_vs_rfp"] = st.slider("Completeness vs RFP", 0.0, 40.0, 20.0, 5.0)
-    weights["tone_persuasiveness"] = st.slider("Tone & Persuasiveness", 0.0, 20.0, 5.0, 5.0)
-    weights["risk_transparency"] = st.slider("Risk & Assumptions", 0.0, 30.0, 10.0, 5.0)
+    weights["problem_understanding"] = st.slider("Problem Understanding", 0.0, 40.0, key="w_problem_understanding", step=5.0)
+    weights["scope_deliverables_clarity"] = st.slider("Scope & Deliverables Clarity", 0.0, 40.0, key="w_scope_deliverables_clarity", step=5.0)
+    weights["pricing_clarity"] = st.slider("Pricing Clarity", 0.0, 40.0, key="w_pricing_clarity", step=5.0)
+    weights["timeline_clarity"] = st.slider("Timeline Clarity", 0.0, 40.0, key="w_timeline_clarity", step=5.0)
+    weights["completeness_vs_rfp"] = st.slider("Completeness vs RFP", 0.0, 40.0, key="w_completeness_vs_rfp", step=5.0)
+    weights["tone_persuasiveness"] = st.slider("Tone & Persuasiveness", 0.0, 20.0, key="w_tone_persuasiveness", step=5.0)
+    weights["risk_transparency"] = st.slider("Risk & Assumptions", 0.0, 30.0, key="w_risk_transparency", step=5.0)
 
     total_w = sum(weights.values())
     if abs(total_w - 100.0) > 0.1:
@@ -306,9 +312,16 @@ with st.sidebar:
     else:
         st.success("✅ Total Weight: 100%")
 
-    if st.button("🔄 Reset Weights"):
-        weights = DEFAULT_WEIGHTS
-        st.rerun()
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if st.button("🔄 Reset Weights"):
+            for k, v in DEFAULT_WEIGHTS.items():
+                st.session_state[f"w_{k}"] = v
+            st.rerun()
+    with col_btn2:
+        if st.button("🚀 Re-evaluate", help="Re-runs the full 2-stage multi-agent evaluation pipeline from scratch"):
+            st.session_state["force_reeval"] = True
+            st.rerun()
 
 # Validation before running evaluation
 if uploaded_rfp and rfp_is_blank:
@@ -356,32 +369,51 @@ if not rfp_text.strip() or not proposal_text.strip():
     """, unsafe_allow_html=True)
     st.stop()
 
-# Run Evaluation
+# Run Evaluation or Instant Recalculation
 report = None
-try:
-    with st.spinner("🤖 Evaluating Proposal against RFP (2-Stage Multi-Agent Analysis)..."):
-        report = evaluate_proposal(
-            rfp_text=rfp_text,
-            proposal_text=proposal_text,
-            proposal_title=proposal_title,
-            rfp_title=rfp_title,
-            custom_weights=weights,
-            force_fallback=not use_llm_mode,
-            rfp_metrics=rfp_metrics,
-            proposal_metrics=proposal_metrics,
-            allow_fallback_on_error=fallback_on_error,
+
+eval_signature = hashlib.sha256(
+    f"{rfp_text}###{proposal_text}###{rfp_title}###{proposal_title}###{use_llm_mode}###{fallback_on_error}".encode("utf-8")
+).hexdigest()
+
+force_reeval = st.session_state.pop("force_reeval", False)
+needs_full_eval = (
+    "cached_report" not in st.session_state
+    or st.session_state.get("cached_eval_signature") != eval_signature
+    or force_reeval
+)
+
+if needs_full_eval:
+    try:
+        with st.spinner("🤖 Evaluating Proposal against RFP (2-Stage Multi-Agent Analysis)..."):
+            report = evaluate_proposal(
+                rfp_text=rfp_text,
+                proposal_text=proposal_text,
+                proposal_title=proposal_title,
+                rfp_title=rfp_title,
+                custom_weights=weights,
+                force_fallback=not use_llm_mode,
+                rfp_metrics=rfp_metrics,
+                proposal_metrics=proposal_metrics,
+                allow_fallback_on_error=fallback_on_error,
+            )
+            st.session_state["cached_report"] = report
+            st.session_state["cached_eval_signature"] = eval_signature
+    except Exception as e:
+        st.error(f"🚨 **Evaluation Error:** {e}")
+        with st.expander("🔍 Diagnostic Error Details & Traceback", expanded=True):
+            st.code(traceback.format_exc())
+        st.info(
+            "💡 **Troubleshooting & Remediation:**\n"
+            "- Check that your Gemini API key in `.env` is valid and active.\n"
+            "- Verify that the uploaded files contain readable text.\n"
+            "- If you want to view offline heuristic scores despite the LLM error, turn ON **'Auto-fallback to Rule Engine on Error'** in the sidebar."
         )
-except Exception as e:
-    st.error(f"🚨 **Evaluation Error:** {e}")
-    with st.expander("🔍 Diagnostic Error Details & Traceback", expanded=True):
-        st.code(traceback.format_exc())
-    st.info(
-        "💡 **Troubleshooting & Remediation:**\n"
-        "- Check that your Gemini API key in `.env` is valid and active.\n"
-        "- Verify that the uploaded files contain readable text.\n"
-        "- If you want to view offline heuristic scores despite the LLM error, turn ON **'Auto-fallback to Rule Engine on Error'** in the sidebar."
-    )
-    st.stop()
+        st.stop()
+else:
+    # Use cached precalculated report and instantly recompute weighted sums with current weights
+    report = recalculate_report_scores(st.session_state["cached_report"], weights)
+    st.session_state["cached_report"] = report
 
 if getattr(report, "llm_error", None):
     st.error(f"🚨 **AI Multi-Agent Pipeline Encountered an Error:** `{report.llm_error}`")

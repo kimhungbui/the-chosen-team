@@ -6,7 +6,7 @@ Strong > Medium > Overpromising > Weak, and generates complete requirement gap a
 
 import pytest
 from data.sample_data import SAMPLE_DATASETS
-from services.scoring_engine import evaluate_proposal
+from services.scoring_engine import evaluate_proposal, recalculate_report_scores, DEFAULT_WEIGHTS
 from schema.proposal_models import TrafficLight, RequirementCoverageStatus
 
 
@@ -285,6 +285,70 @@ def test_ambiguous_customer_requirements_detection_and_mitigation():
     assert rep_strong.overall_score_pct > rep_weak.overall_score_pct
     assert rep_strong.overall_traffic_light == TrafficLight.GREEN
     assert rep_weak.overall_traffic_light in [TrafficLight.RED, TrafficLight.YELLOW]
+
+
+def test_recalculate_report_scores_instant_and_accurate():
+    rfp_text = SAMPLE_DATASETS["rfp"]["content"]
+    strong_prop = SAMPLE_DATASETS["proposals"]["response_3_strong"]["content"]
+
+    # Generate initial report with default weights
+    report = evaluate_proposal(rfp_text=rfp_text, proposal_text=strong_prop, force_fallback=True)
+    initial_score = report.overall_score_pct
+    initial_pricing = next(c for c in report.rubric_scores if c.criterion_id == "pricing_clarity")
+    assert initial_pricing.weight == 15.0
+
+    # Apply new custom weights: bump pricing to 40%, reduce others
+    new_weights = {
+        "problem_understanding": 10.0,
+        "scope_deliverables_clarity": 10.0,
+        "pricing_clarity": 40.0,
+        "timeline_clarity": 10.0,
+        "completeness_vs_rfp": 10.0,
+        "tone_persuasiveness": 10.0,
+        "risk_transparency": 10.0,
+    }
+
+    updated_report = recalculate_report_scores(report, new_weights)
+
+    # Verify that the report itself is returned updated
+    assert updated_report is report
+    updated_pricing = next(c for c in updated_report.rubric_scores if c.criterion_id == "pricing_clarity")
+    assert updated_pricing.weight == 40.0
+    expected_pricing_weighted = round((updated_pricing.score_1_to_5 / 5.0) * 40.0, 2)
+    assert updated_pricing.weighted_score == expected_pricing_weighted
+
+    # Verify overall score matches sum of weighted scores
+    expected_total = round(sum(c.weighted_score for c in updated_report.rubric_scores), 1)
+    assert updated_report.overall_score_pct == expected_total
+
+    # Verify resetting weights restores the original score without re-evaluating
+    reset_report = recalculate_report_scores(report, DEFAULT_WEIGHTS)
+    assert reset_report.overall_score_pct == initial_score
+
+
+def test_recalculate_preserves_company_mismatch_disqualification():
+    rfp = """
+    # Request for Proposal
+    **Client:** Tesla Motors Inc.
+    ## Requirements
+    1. Factory telemetry dashboard.
+    """
+    prop_wrong = """
+    # Proposal for Ford Motor Company
+    **Prepared for:** Ford Motor Company
+    We propose telemetry dashboards for Ford factories.
+    """
+
+    rep_wrong = evaluate_proposal(rfp, prop_wrong, force_fallback=True)
+    assert rep_wrong.overall_score_pct == 0.0
+    assert rep_wrong.overall_traffic_light == TrafficLight.RED
+
+    # Recalculating with any weights must keep 0.0% disqualified score
+    new_weights = {k: 100.0 / 7.0 for k in DEFAULT_WEIGHTS}
+    recalculated = recalculate_report_scores(rep_wrong, new_weights)
+    assert recalculated.overall_score_pct == 0.0
+    assert recalculated.overall_traffic_light == TrafficLight.RED
+
 
 
 

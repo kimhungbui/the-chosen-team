@@ -63,6 +63,57 @@ def normalize_criterion_id(raw_id: str) -> str:
     return raw
 
 
+def recalculate_report_scores(
+    report: ProposalEvaluationReport,
+    custom_weights: Optional[Dict[str, float]] = None,
+) -> ProposalEvaluationReport:
+    """
+    Recalculate weighted scores and overall percentage for an existing evaluation report
+    using new rubric criteria weights, without re-running the multi-agent LLM pipeline.
+    """
+    weights = custom_weights or DEFAULT_WEIGHTS
+
+    # Check if report was disqualified due to target company mismatch
+    is_disqualified = False
+    if report.overall_score_pct == 0.0:
+        for gap in getattr(report, "requirement_gaps", []):
+            if getattr(gap, "requirement_id", "") == "REQ-DISQUALIFY":
+                is_disqualified = True
+                break
+
+    total_weighted = 0.0
+    for crit in report.rubric_scores:
+        norm_id = normalize_criterion_id(crit.criterion_id)
+        crit.criterion_id = norm_id
+
+        assigned_weight = weights.get(norm_id, 15.0)
+        if assigned_weight <= 1.0 and assigned_weight > 0:
+            assigned_weight *= 100.0
+
+        crit.weight = assigned_weight
+        crit.weighted_score = round((crit.score_1_to_5 / 5.0) * assigned_weight, 2)
+        crit.traffic_light = get_traffic_light(crit.score_1_to_5)
+        total_weighted += crit.weighted_score
+
+    if is_disqualified:
+        report.overall_score_pct = 0.0
+        report.overall_traffic_light = TrafficLight.RED
+    else:
+        report.overall_score_pct = round(total_weighted, 1)
+        report.overall_traffic_light = get_traffic_light(report.overall_score_pct)
+
+    # If executive summary includes an explicit "(Score: XX.X%)", update it to match new score
+    if getattr(report, "executive_summary", None) and not is_disqualified:
+        report.executive_summary = re.sub(
+            r"\(Score:\s*[\d\.]+%\)",
+            f"(Score: {report.overall_score_pct}%)",
+            report.executive_summary,
+        )
+
+    return report
+
+
+
 def clean_company_name(raw: str) -> str:
     cleaned = re.sub(r"\(fictional\)|\(fictitious\)", "", raw, flags=re.I)
     cleaned = re.sub(r"[\*#_`]", "", cleaned)
@@ -519,22 +570,7 @@ MANDATORY INSTRUCTIONS:
         report.detected_client_priorities = detected_priorities
 
     # Recalculate weighted scores using exact user-selected weights & normalized IDs
-    total_weighted = 0.0
-    for crit in report.rubric_scores:
-        norm_id = normalize_criterion_id(crit.criterion_id)
-        crit.criterion_id = norm_id
-
-        assigned_weight = weights.get(norm_id, 15.0)
-        if assigned_weight <= 1.0 and assigned_weight > 0:
-            assigned_weight *= 100.0
-
-        crit.weight = assigned_weight
-        crit.weighted_score = round((crit.score_1_to_5 / 5.0) * assigned_weight, 2)
-        crit.traffic_light = get_traffic_light(crit.score_1_to_5)
-        total_weighted += crit.weighted_score
-
-    report.overall_score_pct = round(total_weighted, 1)
-    report.overall_traffic_light = get_traffic_light(report.overall_score_pct)
+    recalculate_report_scores(report, weights)
     if not getattr(report, "ambiguous_requirements", None):
         report.ambiguous_requirements = detect_ambiguous_requirements(rfp_text, proposal_text)
     report.rfp_metrics = rfp_metrics or {}
