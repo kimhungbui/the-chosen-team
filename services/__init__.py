@@ -19,6 +19,10 @@ from services.history_service import (
     clear_history,
     get_history_stats,
 )
+from services.api_service import (
+    ProposalScorerAPI,
+    api_service,
+)
 
 __all__ = [
     "evaluate_proposal",
@@ -33,4 +37,6 @@ __all__ = [
     "delete_evaluation",
     "clear_history",
     "get_history_stats",
+    "ProposalScorerAPI",
+    "api_service",
 ]

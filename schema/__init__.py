@@ -14,6 +14,16 @@ from schema.history_models import (
     HistoryRecordDetail,
     HistoryStats,
 )
+from schema.api_models import (
+    EvaluateProposalRequest,
+    EvaluateProposalResponse,
+    HistoryListRequest,
+    HistoryListResponse,
+    HistoryDetailResponse,
+    HistoryDeleteResponse,
+    HistoryClearResponse,
+    HistoryStatsResponse,
+)
 
 __all__ = [
     "TrafficLight",
@@ -28,4 +38,12 @@ __all__ = [
     "HistoryRecordSummary",
     "HistoryRecordDetail",
     "HistoryStats",
+    "EvaluateProposalRequest",
+    "EvaluateProposalResponse",
+    "HistoryListRequest",
+    "HistoryListResponse",
+    "HistoryDetailResponse",
+    "HistoryDeleteResponse",
+    "HistoryClearResponse",
+    "HistoryStatsResponse",
 ]
