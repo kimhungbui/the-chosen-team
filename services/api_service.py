@@ -70,6 +70,13 @@ class ProposalScorerAPI:
                 )
                 history_id = saved_record.id
 
+            if report:
+                report.llm_error_traceback = None
+                if report.llm_error:
+                    report.llm_error = "AI evaluation failed; rule-engine fallback was used."
+                if report.engine_notice and report.llm_error:
+                    report.engine_notice = "AI evaluation failed; automatically switched to rule engine."
+
             return EvaluateProposalResponse(
                 success=True,
                 report=report,
