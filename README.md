@@ -52,7 +52,8 @@ npm run dev
 bun dev
 ```
 
-Frontend dev server proxy sẵn `/evaluate`, `/history`, `/stats` sang `http://localhost:8000`.
+Frontend dev server proxy sẵn `/evaluate`, `/history`, `/stats` sang `http://localhost:8000`. 
+Deployment trigger
 
 ## API
 
